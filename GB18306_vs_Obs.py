@@ -620,9 +620,7 @@ def plot_gb18306_vs_obs(
                 zorder=6,
             )
 
-        ax.plot(
-            lon0, lat0, "k*", markersize=9, zorder=10, label="宏观震中（反演）"
-        )
+        ax.plot(lon0, lat0, "k*", markersize=9, zorder=10, label="宏观震中")
         if initial_epicenter is not None:
             ax.plot(
                 initial_epicenter[0],
@@ -729,12 +727,12 @@ def plot_gb18306_vs_obs(
             sigma_ln = SIGMA_GB18306["pga" if T == -1 else "pgv"] * math.log(
                 10.0
             )
-            ax.axhline(sigma_ln, color="gray", lw=0.8, ls="--")
+            ax.axhline(sigma_ln, color="r", lw=1.3, ls="-.")
             ax.axhline(
                 -sigma_ln,
-                color="gray",
-                lw=0.8,
-                ls="--",
+                color="r",
+                lw=1.3,
+                ls="-.",
                 label=f"±1σ = ±{sigma_ln:.3f} (ln)",
             )
         if use_markers:
@@ -778,10 +776,14 @@ def plot_gb18306_vs_obs(
             ("≥200 km", res[valid & (dist >= max_dist)]),
         ]
         colors_g = ["#1f77b4", "#2ca02c", "#d62728"]
+        ax.axhline(0, color="k", lw=1.0, zorder=0)  # 零线放底层
         for xpos, (_, gdata), gcol in zip(range(3), groups, colors_g):
             half_violin_box_scatter(
                 ax, gdata, xpos, gcol, value_fmt="{:.3f}", s=18
             )
+        if kind == "gmm":
+            ax.axhline(sigma_ln, color="r", lw=1.3, ls="-.")
+            ax.axhline(-sigma_ln, color="r", lw=1.3, ls="-.")
         ax.set_xticks([0, 1, 2])
         ax.set_xticklabels(["全部", "<200 km", "≥200 km"])
         ax.set_xlim(-0.6, 2.6)
