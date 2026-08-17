@@ -26,7 +26,7 @@ PGV 用 PGA÷10，烈度用 USGS MMI 十色 1~10 度。
 使用案例：
     from CEA2019_vs_Obs import plot_cea2019_vs_obs, export_cea2019_vs_obs_txt
     plot_cea2019_vs_obs(
-        data="台站文件.txt", epicenter=(87.378, 28.604),
+        data="台站文件.txt", macro_epicenter=(87.378, 28.604),
         Ms=6.8, region="青藏区", strike=349.0,
         params=(-1, -2, 0.3, 1.0, "Intensity"),
         outpath="CEA2019_vs_Obs.png",
@@ -125,13 +125,14 @@ def param_info(p):
 
 
 def obs_col_candidates(info):
-    """实测列候选（水平向 _H 优先，其次 RotD50 / 原始列）"""
+    """实测列候选：EPA/EPV 优先（PGA/PGV 实为 EPA/EPV），没有再回退
+    PGA_H/PGV_H 或 PGA/PGV；PSA 用水平向 _H，其次 RotD50"""
     if info["kind"] == "intensity":
         return ["I"]
     if info["T"] == -1:
-        return ["PGA_H", "PGA"]
+        return ["EPA_H", "PGA_H", "PGA"]
     if info["T"] == -2:
-        return ["PGV_H", "PGV"]
+        return ["EPV_H", "PGV_H", "PGV"]
     tag = f"pSa(T={info['T']:.2f}s)"
     return [f"{tag}_H", f"{tag}_RotD50", tag]
 
@@ -326,7 +327,7 @@ def _compute_vs_obs(
 
 def plot_cea2019_vs_obs(
     data,
-    epicenter,
+    macro_epicenter,
     Ms,
     region,
     strike,
@@ -337,25 +338,21 @@ def plot_cea2019_vs_obs(
     param_cols=None,
     grid_n=100,
     axis="长轴",
-    macro_epicenter=None,
     initial_epicenter=None,
     fault_lon_mat=None,
     fault_lat_mat=None,
 ):
     """
     基于给定震中，用 CEA2019 预测并绘制"预测 vs 实测"4×N 综合图。
-    epicenter / macro_epicenter：宏观震中（迭代/反演得到的经纬度），
-        两者给一个即可（macro_epicenter 优先）；
+    macro_epicenter：宏观震中（迭代/反演得到的经纬度），必填；
     initial_epicenter：初始破裂点（发布值），仅作标记；
     fault_lon_mat / fault_lat_mat：断层面网格矩阵（第一行=上缘，
         最后一行=下缘），提供时在第一排绘制断层投影。
     """
     if axis not in ("长轴", "短轴"):
         raise ValueError("axis 只能是 '长轴' 或 '短轴'")
-    if macro_epicenter is not None:
-        epicenter = macro_epicenter
     C = _compute_vs_obs(
-        data, epicenter, Ms, region, strike, params, extent, param_cols
+        data, macro_epicenter, Ms, region, strike, params, extent, param_cols
     )
     params, infos, labels = C["params"], C["infos"], C["labels"]
     obs, preds, aeqs, ress = C["obs"], C["preds"], C["aeqs"], C["ress"]
@@ -685,7 +682,7 @@ def _fmt_num(v, nd=6):
 
 def export_cea2019_vs_obs_txt(
     data,
-    epicenter,
+    macro_epicenter,
     Ms,
     region,
     strike,
@@ -705,7 +702,7 @@ def export_cea2019_vs_obs_txt(
     残差与图一致：PGA/PGV/PSA 用 ln(预测/实测)，烈度用 预测-实测（线性）。
     """
     C = _compute_vs_obs(
-        data, epicenter, Ms, region, strike, params, extent, param_cols
+        data, macro_epicenter, Ms, region, strike, params, extent, param_cols
     )
     obs, labels = C["obs"], C["labels"]
     preds, aeqs, ress = C["preds"], C["aeqs"], C["ress"]
@@ -750,7 +747,7 @@ if __name__ == "__main__":
 
     plot_cea2019_vs_obs(
         data="20250107_China_Dingri_total_info_Bandpass_0.05_20Hz.txt",
-        epicenter=(87.45, 28.5),
+        macro_epicenter=(87.45, 28.5),
         Ms=6.8,
         region="青藏",
         strike=187,
