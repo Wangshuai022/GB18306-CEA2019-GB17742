@@ -71,8 +71,11 @@ from CEA2019_pre import (
     km_to_lonlat,
 )
 from GB17742_class import GB17742_2020_Cal_instrument_intensity as CAL_INT
-from stat_violin import apply_style, half_violin_box_scatter, fit_annotations_inside
-
+from stat_violin import (
+    apply_style,
+    half_violin_box_scatter,
+    fit_annotations_inside,
+)
 
 # ==================== 参数规范（按周期点） ====================
 
@@ -113,7 +116,12 @@ def param_info(p):
     if p == "Intensity":
         return {"label": "烈度", "kind": "intensity", "T": None, "unit": ""}
     t = float(p)
-    return {"label": period_label(t), "kind": "gmm", "T": t, "unit": unit_label(t)}
+    return {
+        "label": period_label(t),
+        "kind": "gmm",
+        "T": t,
+        "unit": unit_label(t),
+    }
 
 
 def obs_col_candidates(info):
@@ -142,7 +150,9 @@ def load_obs_data(data, params, param_cols=None):
     df.columns = [str(c).strip() for c in df.columns]
     df = df.rename(columns={"longi": "lon", "lati": "lat"})
     if "lon" not in df.columns or "lat" not in df.columns:
-        raise ValueError(f"缺少 lon/lat 列，现有列：{list(df.columns)[:20]}...")
+        raise ValueError(
+            f"缺少 lon/lat 列，现有列：{list(df.columns)[:20]}..."
+        )
     if "Sta_ID" not in df.columns:
         df["Sta_ID"] = [f"S{i + 1}" for i in range(len(df))]
 
@@ -168,7 +178,9 @@ def load_obs_data(data, params, param_cols=None):
         )
         col = next((c for c in cands if c in df.columns), None)
         if col is None:
-            raise ValueError(f"参数 {label}（周期 {info['T']}）找不到实测列，候选：{cands}")
+            raise ValueError(
+                f"参数 {label}（周期 {info['T']}）找不到实测列，候选：{cands}"
+            )
         out[label] = pd.to_numeric(df[col], errors="coerce")
     return out.dropna(subset=["lon", "lat"]).reset_index(drop=True)
 
@@ -176,12 +188,22 @@ def load_obs_data(data, params, param_cols=None):
 # ==================== 预测 / 椭圆距 / 残差 ====================
 
 
-def _predict_one(param, lon, lat, strike, region, Ms, sta_lon, sta_lat, extent):
+def _predict_one(
+    param, lon, lat, strike, region, Ms, sta_lon, sta_lat, extent
+):
     """用 CEA2019 预测单个参数在台站（或网格点）处的值"""
     info = param_info(param)
     if info["kind"] == "gmm":
         lab = predict_period_values(
-            lon, lat, strike, region, Ms, [info["T"]], sta_lon, sta_lat, extent=extent
+            lon,
+            lat,
+            strike,
+            region,
+            Ms,
+            [info["T"]],
+            sta_lon,
+            sta_lat,
+            extent=extent,
         )
         return lab[period_label(info["T"])]
     # 烈度：预测 PGA + PGV → GB/T 17742 仪器烈度
@@ -208,7 +230,9 @@ def _a_eq(param, pred, region, Ms, preds):
 def _residual(pred, obs, kind):
     """残差 = 预测 - 实测：PGA/PGV/PSA 用 ln(Pred/Obs)；烈度用线性差"""
     if kind == "gmm":
-        return np.log(np.asarray(pred, dtype=float) / np.asarray(obs, dtype=float))
+        return np.log(
+            np.asarray(pred, dtype=float) / np.asarray(obs, dtype=float)
+        )
     return np.asarray(pred, dtype=float) - np.asarray(obs, dtype=float)
 
 
@@ -239,11 +263,15 @@ def _level_ticks(param, levels):
 # ==================== 共享计算（绘图与 txt 共用，保证一致） ====================
 
 
-def _compute_vs_obs(data, epicenter, Ms, region, strike, params, extent, param_cols=None):
+def _compute_vs_obs(
+    data, epicenter, Ms, region, strike, params, extent, param_cols=None
+):
     """返回 观测/预测/椭圆距/残差 等全部结果（供绘图与导出共用）"""
     params = normalize_params(params)
     if not params:
-        raise ValueError("params 不能为空；支持 -1/0(PGA)、-2(PGV)、数值周期(PSA)、'Intensity'")
+        raise ValueError(
+            "params 不能为空；支持 -1/0(PGA)、-2(PGV)、数值周期(PSA)、'Intensity'"
+        )
     infos = {p: param_info(p) for p in params}
     obs = load_obs_data(data, params, param_cols=param_cols)
     lon0, lat0 = float(epicenter[0]), float(epicenter[1])
@@ -252,18 +280,29 @@ def _compute_vs_obs(data, epicenter, Ms, region, strike, params, extent, param_c
 
     preds = {
         infos[p]["label"]: _predict_one(
-            p, lon0, lat0, strike, region, Ms,
-            obs["lon"].values, obs["lat"].values, extent,
+            p,
+            lon0,
+            lat0,
+            strike,
+            region,
+            Ms,
+            obs["lon"].values,
+            obs["lat"].values,
+            extent,
         )
         for p in params
     }
     aeqs = {
-        infos[p]["label"]: _a_eq(p, preds[infos[p]["label"]], region, Ms, preds)
+        infos[p]["label"]: _a_eq(
+            p, preds[infos[p]["label"]], region, Ms, preds
+        )
         for p in params
     }
     ress = {
         infos[p]["label"]: _residual(
-            preds[infos[p]["label"]], obs[infos[p]["label"]].values, infos[p]["kind"]
+            preds[infos[p]["label"]],
+            obs[infos[p]["label"]].values,
+            infos[p]["kind"],
         )
         for p in params
     }
@@ -302,7 +341,9 @@ def plot_cea2019_vs_obs(
     """基于给定震中，用 CEA2019 预测并绘制"预测 vs 实测"4×N 综合图。"""
     if axis not in ("长轴", "短轴"):
         raise ValueError("axis 只能是 '长轴' 或 '短轴'")
-    C = _compute_vs_obs(data, epicenter, Ms, region, strike, params, extent, param_cols)
+    C = _compute_vs_obs(
+        data, epicenter, Ms, region, strike, params, extent, param_cols
+    )
     params, infos, labels = C["params"], C["infos"], C["labels"]
     obs, preds, aeqs, ress = C["obs"], C["preds"], C["aeqs"], C["ress"]
     lon0, lat0, strike, rc = C["lon0"], C["lat0"], C["strike"], C["rc"]
@@ -340,42 +381,94 @@ def plot_cea2019_vs_obs(
         c_lon = (obs["lon"].min() + obs["lon"].max()) / 2.0
         c_lat = (obs["lat"].min() + obs["lat"].max()) / 2.0
         clon_km = 111.32 * math.cos(math.radians(c_lat))
-        half_km = max(
-            (obs["lon"].max() - obs["lon"].min()) * clon_km,
-            (obs["lat"].max() - obs["lat"].min()) * 110.57,
-        ) / 2.0 * 1.25
+        half_km = (
+            max(
+                (obs["lon"].max() - obs["lon"].min()) * clon_km,
+                (obs["lat"].max() - obs["lat"].min()) * 110.57,
+            )
+            / 2.0
+            * 1.25
+        )
         half_km = max(half_km, 40.0)
-        glon = np.linspace(c_lon - half_km / clon_km, c_lon + half_km / clon_km, grid_n)
-        glat = np.linspace(c_lat - half_km / 110.57, c_lat + half_km / 110.57, grid_n)
+        glon = np.linspace(
+            c_lon - half_km / clon_km, c_lon + half_km / clon_km, grid_n
+        )
+        glat = np.linspace(
+            c_lat - half_km / 110.57, c_lat + half_km / 110.57, grid_n
+        )
         GLON, GLAT = np.meshgrid(glon, glat)
         pred_grid = _predict_one(
-            p, lon0, lat0, strike, region, Ms, GLON.ravel(), GLAT.ravel(), extent
+            p,
+            lon0,
+            lat0,
+            strike,
+            region,
+            Ms,
+            GLON.ravel(),
+            GLAT.ravel(),
+            extent,
         ).reshape(GLON.shape)
-        cf = ax.contourf(GLON, GLAT, pred_grid, levels=levels, cmap=cmap,
-                         norm=norm, extend="both")
-        cb = fig.colorbar(cf, ax=ax, ticks=tick_positions, pad=0.03, shrink=0.85)
+        cf = ax.contourf(
+            GLON,
+            GLAT,
+            pred_grid,
+            levels=levels,
+            cmap=cmap,
+            norm=norm,
+            extend="both",
+        )
+        cb = fig.colorbar(
+            cf, ax=ax, ticks=tick_positions, pad=0.03, shrink=0.85
+        )
         cb.ax.set_yticklabels(tick_labels)
         cb.set_label(title, fontsize=8)
 
         sel = valid & obs[label].notna().values
         if use_markers:
-            for mk, name, sym in (("HN", "强震仪", "o"), ("EI", "烈度计", "^")):
+            for mk, name, sym in (
+                ("HN", "强震仪", "o"),
+                ("EI", "烈度计", "^"),
+            ):
                 m = sel & (itype == mk)
                 if m.any():
-                    ax.scatter(obs["lon"][m], obs["lat"][m], c=obs[label][m],
-                               cmap=cmap, norm=norm, marker=sym, s=38,
-                               edgecolors="k", linewidths=0.4, zorder=6, label=name)
+                    ax.scatter(
+                        obs["lon"][m],
+                        obs["lat"][m],
+                        c=obs[label][m],
+                        cmap=cmap,
+                        norm=norm,
+                        marker=sym,
+                        s=38,
+                        edgecolors="k",
+                        linewidths=0.4,
+                        zorder=6,
+                        label=name,
+                    )
         else:
-            ax.scatter(obs["lon"][sel], obs["lat"][sel], c=obs[label][sel],
-                       cmap=cmap, norm=norm, marker="o", s=38,
-                       edgecolors="k", linewidths=0.4, zorder=6)
+            ax.scatter(
+                obs["lon"][sel],
+                obs["lat"][sel],
+                c=obs[label][sel],
+                cmap=cmap,
+                norm=norm,
+                marker="o",
+                s=38,
+                edgecolors="k",
+                linewidths=0.4,
+                zorder=6,
+            )
 
         ax.plot(lon0, lat0, "k*", markersize=12, zorder=10)
         sr = math.radians(strike)
-        arr_lon, arr_lat = km_to_lonlat(lon0, lat0, 80.0 * math.sin(sr),
-                                        80.0 * math.cos(sr), utm_zone)
-        ax.annotate("", xy=(arr_lon, arr_lat), xytext=(lon0, lat0),
-                    arrowprops=dict(arrowstyle="->", color="k", lw=1.1))
+        arr_lon, arr_lat = km_to_lonlat(
+            lon0, lat0, 80.0 * math.sin(sr), 80.0 * math.cos(sr), utm_zone
+        )
+        ax.annotate(
+            "",
+            xy=(arr_lon, arr_lat),
+            xytext=(lon0, lat0),
+            arrowprops=dict(arrowstyle="->", color="k", lw=1.1),
+        )
         ax.set_xlim(glon[0], glon[-1])
         ax.set_ylim(glat[0], glat[-1])
         ax.set_aspect(1.0 / math.cos(math.radians((glat[0] + glat[-1]) / 2.0)))
@@ -390,7 +483,9 @@ def plot_cea2019_vs_obs(
         ax = axes[1, i]
         dist = a_eq if axis == "长轴" else b_eq  # 散点距离轴
         far = float(np.nanmax(dist[valid])) if valid.any() else 0.0
-        a_max = max(200.0, math.ceil(far / 100.0) * 100.0 + 100.0)  # 取整到100+100，最小200
+        a_max = max(
+            200.0, math.ceil(far / 100.0) * 100.0 + 100.0
+        )  # 取整到100+100，最小200
         r_scan = np.arange(1.0, a_max + 1.0, 1.0)
         if kind == "gmm":
             lm, ll, lu = _period_curves_sigma(T, Ms, rc, axis, r_scan)
@@ -404,7 +499,9 @@ def plot_cea2019_vs_obs(
         ax.axvspan(max_dist, a_max, color="lightgray", alpha=0.55, zorder=0)
         ax.axvline(max_dist, color="0.4", ls=":", lw=1.0, zorder=1)
         ax.plot(r_scan, lm, color="tab:red", lw=1.5, label=f"{axis}中值")
-        ax.fill_between(r_scan, ll, lu, color="tab:red", alpha=0.15, label=f"{axis}±1σ")
+        ax.fill_between(
+            r_scan, ll, lu, color="tab:red", alpha=0.15, label=f"{axis}±1σ"
+        )
         ax.set_xscale("log")
         if kind == "gmm":
             ax.set_yscale("log")
@@ -412,11 +509,27 @@ def plot_cea2019_vs_obs(
             for mk, sym in (("HN", "o"), ("EI", "^")):
                 m = valid & (itype == mk)
                 if m.any():
-                    ax.scatter(dist[m], obs[label][m], marker=sym, s=28,
-                               facecolor="none", edgecolors="k", linewidths=0.7, zorder=5)
+                    ax.scatter(
+                        dist[m],
+                        obs[label][m],
+                        marker=sym,
+                        s=28,
+                        facecolor="none",
+                        edgecolors="k",
+                        linewidths=0.7,
+                        zorder=5,
+                    )
         else:
-            ax.scatter(dist[valid], obs[label][valid], marker="o", s=28,
-                       facecolor="none", edgecolors="k", linewidths=0.7, zorder=5)
+            ax.scatter(
+                dist[valid],
+                obs[label][valid],
+                marker="o",
+                s=28,
+                facecolor="none",
+                edgecolors="k",
+                linewidths=0.7,
+                zorder=5,
+            )
         ax.set_xlim(1.0, a_max)
         ax.set_xlabel(f"等效{axis}距 (km)", fontsize=8)
         ax.set_ylabel("预测 / 实测值", fontsize=8)
@@ -427,24 +540,47 @@ def plot_cea2019_vs_obs(
         # ================= 排3：残差（线性距离轴）=================
         ax = axes[2, i]
         far3 = float(np.nanmax(dist[valid])) if valid.any() else 0.0
-        x_max3 = max(200.0, math.ceil(far3 / 50.0) * 50.0)  # 取整到50的倍数，最小200
+        x_max3 = max(
+            200.0, math.ceil(far3 / 50.0) * 50.0
+        )  # 取整到50的倍数，最小200
         ax.axvspan(max_dist, x_max3, color="lightgray", alpha=0.55, zorder=0)
         ax.axvline(max_dist, color="0.4", ls=":", lw=1.0, zorder=1)
         ax.axhline(0, color="k", lw=1.0, zorder=2)
         if kind == "gmm":
             sigma_ln = _period_coeffs(rc, "长轴", T, Ms)[3] * math.log(10.0)
             ax.axhline(sigma_ln, color="gray", lw=0.8, ls="--")
-            ax.axhline(-sigma_ln, color="gray", lw=0.8, ls="--",
-                       label=f"±1σ = ±{sigma_ln:.3f} (ln)")
+            ax.axhline(
+                -sigma_ln,
+                color="gray",
+                lw=0.8,
+                ls="--",
+                label=f"±1σ = ±{sigma_ln:.3f} (ln)",
+            )
         if use_markers:
             for mk, sym in (("HN", "o"), ("EI", "^")):
                 m = valid & (itype == mk)
                 if m.any():
-                    ax.scatter(dist[m], res[m], marker=sym, s=26,
-                               facecolor="none", edgecolors="k", linewidths=0.7, zorder=5)
+                    ax.scatter(
+                        dist[m],
+                        res[m],
+                        marker=sym,
+                        s=26,
+                        facecolor="none",
+                        edgecolors="k",
+                        linewidths=0.7,
+                        zorder=5,
+                    )
         else:
-            ax.scatter(dist[valid], res[valid], marker="o", s=26,
-                       facecolor="none", edgecolors="k", linewidths=0.7, zorder=5)
+            ax.scatter(
+                dist[valid],
+                res[valid],
+                marker="o",
+                s=26,
+                facecolor="none",
+                edgecolors="k",
+                linewidths=0.7,
+                zorder=5,
+            )
         ax.set_xlim(0, x_max3)
         ax.set_xlabel(f"等效{axis}距 (km)", fontsize=8)
         ax.set_ylabel("残差（预测-实测）", fontsize=8)
@@ -462,7 +598,9 @@ def plot_cea2019_vs_obs(
         ]
         colors_g = ["#1f77b4", "#2ca02c", "#d62728"]
         for xpos, (_, gdata), gcol in zip(range(3), groups, colors_g):
-            half_violin_box_scatter(ax, gdata, xpos, gcol, value_fmt="{:.3f}", s=18)
+            half_violin_box_scatter(
+                ax, gdata, xpos, gcol, value_fmt="{:.3f}", s=18
+            )
         ax.set_xticks([0, 1, 2])
         ax.set_xticklabels(["全部", "<200 km", "≥200 km"])
         ax.set_xlim(-0.6, 2.6)
@@ -523,22 +661,38 @@ def export_cea2019_vs_obs_txt(
             Repi_short_<参数>(km) / <参数>_res
     残差与图一致：PGA/PGV/PSA 用 ln(预测/实测)，烈度用 预测-实测（线性）。
     """
-    C = _compute_vs_obs(data, epicenter, Ms, region, strike, params, extent, param_cols)
+    C = _compute_vs_obs(
+        data, epicenter, Ms, region, strike, params, extent, param_cols
+    )
     obs, labels = C["obs"], C["labels"]
     preds, aeqs, ress = C["preds"], C["aeqs"], C["ress"]
 
     cols = ["Sta_ID", "Sta_longi", "Sta_lati", "Instrument_Type"]
     for label in labels:
-        cols += [f"{label}_obs", f"{label}_pred",
-                 f"Repi_long_{label}(km)", f"Repi_short_{label}(km)", f"{label}_res"]
+        cols += [
+            f"{label}_obs",
+            f"{label}_pred",
+            f"Repi_long_{label}(km)",
+            f"Repi_short_{label}(km)",
+            f"{label}_res",
+        ]
     lines = ["\t".join(cols)]
     for j in range(len(obs)):
-        row = [str(obs["Sta_ID"][j]), f"{obs['lon'][j]:.4f}",
-               f"{obs['lat'][j]:.4f}", str(obs["Instrument_Type"][j]) or "-"]
+        row = [
+            str(obs["Sta_ID"][j]),
+            f"{obs['lon'][j]:.4f}",
+            f"{obs['lat'][j]:.4f}",
+            str(obs["Instrument_Type"][j]) or "-",
+        ]
         for label in labels:
             a, b = aeqs[label]
-            row += [_fmt_num(obs[label][j]), _fmt_num(preds[label][j]),
-                    _fmt_num(a[j]), _fmt_num(b[j]), _fmt_num(ress[label][j])]
+            row += [
+                _fmt_num(obs[label][j]),
+                _fmt_num(preds[label][j]),
+                _fmt_num(a[j]),
+                _fmt_num(b[j]),
+                _fmt_num(ress[label][j]),
+            ]
         lines.append("\t".join(row))
     with open(outpath, "w", encoding="utf-8-sig") as f:
         f.write("\n".join(lines) + "\n")
@@ -548,6 +702,9 @@ def export_cea2019_vs_obs_txt(
 
 # ---- 测试 ----
 if __name__ == "__main__":
+
+    os.makedirs("Test_output", exist_ok=True)
+
     plot_cea2019_vs_obs(
         data="20250107_China_Dingri_total_info_Bandpass_0.05_20Hz.txt",
         epicenter=(87.45, 28.5),
@@ -557,7 +714,7 @@ if __name__ == "__main__":
         params=(-1, -2, 0.3, 1.0, 3, 6),
         extent=500.0,
         max_dist=200.0,
-        outpath="CEA2019_vs_Obs00.png",
+        outpath="./Test_output/CEA2019_vs_Obs.png",
         grid_n=100,
         axis="短轴",
     )

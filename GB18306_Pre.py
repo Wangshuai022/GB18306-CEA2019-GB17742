@@ -458,7 +458,8 @@ def plot_intensity_ellipses(
 
     fig.tight_layout()
     if output_file is None:
-        output_file = f"intensity_ellipses_{region}_Ms{Ms:g}.png"
+        os.makedirs("Test_output", exist_ok=True)
+        output_file = f"./Test_output/intensity_ellipses_{region}_Ms{Ms:g}.png"
     fig.savefig(output_file, dpi=300, bbox_inches="tight")
     print(f"图片已保存：{os.path.abspath(output_file)}")
     return fig, ax
@@ -1272,7 +1273,8 @@ def plot_pga_pgv_fields(
     fig.tight_layout()
 
     if output_file is None:
-        output_file = f"PGA_PGV_field_{region}_Ms{Ms:g}.png"
+        os.makedirs("Test_output", exist_ok=True)
+        output_file = f"./Test_output/PGA_PGV_field_{region}_Ms{Ms:g}.png"
     fig.savefig(output_file, dpi=300, bbox_inches="tight")
     print(f"图片已保存：{os.path.abspath(output_file)}")
     return fig, axs
@@ -1700,7 +1702,8 @@ def plot_gb18306_all(
     fig.tight_layout()
 
     if output_file is None:
-        output_file = f"GB18306_all_{region}_Ms{Ms:g}.png"
+        os.makedirs("Test_output", exist_ok=True)
+        output_file = f"./Test_output/GB18306_all_{region}_Ms{Ms:g}.png"
     fig.savefig(output_file, dpi=300, bbox_inches="tight")
     print(f"图片已保存：{os.path.abspath(output_file)}")
     return fig, axs
@@ -1861,7 +1864,10 @@ def export_all_table(
     )
 
     if output_file is None:
-        output_file = f"GB18306_pre_all_table_{region}_Ms{Ms:g}.txt"
+        os.makedirs("Test_output", exist_ok=True)
+        output_file = (
+            f"./Test_output/GB18306_pre_all_table_{region}_Ms{Ms:g}.txt"
+        )
     df.to_csv(output_file, sep="\t", index=False, encoding="utf-8-sig")
     print(f"已导出：{os.path.abspath(output_file)}")
     return df

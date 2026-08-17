@@ -510,7 +510,8 @@ def export_period_table(
         df[f"Repi_short_{label}(km)"] = np.round(b_eq, 2)
 
     if output_file is None:
-        output_file = f"CEA2019_pre_table_{rc}区_Ms{Ms:g}.txt"
+        os.makedirs("Test_output", exist_ok=True)
+        output_file = f"./Test_output/CEA2019_pre_table_{rc}区_Ms{Ms:g}.txt"
     df.to_csv(output_file, sep="\t", index=False, encoding="utf-8-sig")
     print(f"已导出：{os.path.abspath(output_file)}")
     return df
@@ -727,7 +728,8 @@ def plot_period_fields(
     fig.tight_layout()
 
     if output_file is None:
-        output_file = f"CEA2019_fields_{rc}区_Ms{Ms:g}.png"
+        os.makedirs("Test_output", exist_ok=True)
+        output_file = f"./Test_output/CEA2019_fields_{rc}区_Ms{Ms:g}.png"
     fig.savefig(output_file, dpi=300, bbox_inches="tight")
     print(f"图片已保存：{os.path.abspath(output_file)}")
     return fig, axs
@@ -782,7 +784,8 @@ def plot_response_spectra_single(
     fig.tight_layout()
 
     if output_file is None:
-        output_file = f"CEA2019_RS_{axis}_Ms{Ms:g}_R{R:g}.png"
+        os.makedirs("Test_output", exist_ok=True)
+        output_file = f"./Test_output/CEA2019_RS_{axis}_Ms{Ms:g}_R{R:g}.png"
     fig.savefig(output_file, dpi=300, bbox_inches="tight")
     print(f"图片已保存：{os.path.abspath(output_file)}")
     return fig, ax
@@ -855,7 +858,8 @@ def plot_response_spectra(
     fig.tight_layout()
 
     if output_file is None:
-        output_file = f"CEA2019_RS_Ms{Ms:g}_R{R:g}.png"
+        os.makedirs("Test_output", exist_ok=True)
+        output_file = f"./Test_output/CEA2019_RS_Ms{Ms:g}_R{R:g}.png"
     fig.savefig(output_file, dpi=300, bbox_inches="tight")
     print(f"图片已保存：{os.path.abspath(output_file)}")
     return fig, axs

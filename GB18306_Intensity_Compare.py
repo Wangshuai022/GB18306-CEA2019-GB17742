@@ -58,7 +58,7 @@ from GB17742_class import (  # noqa: E402
 )
 
 # ================= 可调参数 =================
-REGION = "新疆区"  # 东部区 / 中部区 / 新疆区 / 青藏区
+REGION = "青藏区"  # 东部区 / 中部区 / 新疆区 / 青藏区
 MS = 7.5  # 面波震级 Ms
 R_MIN, R_MAX = 1.0, 400.0  # 距离范围 km
 N_R = 200  # 距离点数（对数均匀）
@@ -119,9 +119,11 @@ def main():
         df[f"I_GB17742_{tag}_up"] = np.round(d["I2_up"], 2)
         df[f"Diff_{tag}"] = np.round(d["diff_mid"], 2)
 
+    os.makedirs("Test_output", exist_ok=True)
     csv_path = os.path.join(
-        BASE, f"GB18306_IntensityCompare_{REGION}_Ms{MS}.csv"
+        BASE, f"./Test_output/GB18306_Intensity_Compare_{REGION}_Ms{MS}.csv"
     )
+
     df.to_csv(csv_path, index=False, encoding="utf-8-sig")
 
     # ---------- 绘图：2 排 × 2 列（标准化布局） ----------
@@ -215,8 +217,9 @@ def main():
         y=1.05,
     )
 
+    os.makedirs("Test_output", exist_ok=True)
     png_path = os.path.join(
-        BASE, f"GB18306_Intensity_Compare_{REGION}_Ms{MS}.png"
+        BASE, f"./Test_output/GB18306_Intensity_Compare_{REGION}_Ms{MS}.png"
     )
     fig.savefig(png_path, dpi=300, bbox_inches="tight")
 

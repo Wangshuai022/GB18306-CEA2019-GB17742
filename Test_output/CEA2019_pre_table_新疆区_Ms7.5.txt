@@ -1,0 +1,4 @@
+﻿Sta_ID	Sta_longi	Sta_lati	Repi(km)	PGA(gal)	Repi_long_PGA(km)	Repi_short_PGA(km)	PGV(cm/s)	Repi_long_PGV(km)	Repi_short_PGV(km)	PSA(T=0.30s)(cm/s²)	Repi_long_PSA(T=0.30s)(km)	Repi_short_PSA(T=0.30s)(km)	PSA(T=1.00s)(cm/s²)	Repi_long_PSA(T=1.00s)(km)	Repi_short_PSA(T=1.00s)(km)	PSA(T=3.00s)(cm/s²)	Repi_long_PSA(T=3.00s)(km)	Repi_short_PSA(T=3.00s)(km)	PSA(T=6.00s)(cm/s²)	Repi_long_PSA(T=6.00s)(km)	Repi_short_PSA(T=6.00s)(km)
+S1	103.0	25.0	0.0	1139.08	1.0	0.81	77.45	1.0	0.45	2697.04	1.0	0.39	1309.27	1.0	0.39	320.21	1.0	0.01	107.77	1.0	0.01
+S2	103.5	25.2	55.08	152.85	57.99	44.34	12.4	58.41	43.38	395.6	58.38	43.42	198.83	58.48	43.19	55.75	59.28	41.52	20.32	60.22	39.87
+S3	102.5	25.1	51.67	174.22	52.66	40.09	14.04	52.81	39.03	450.51	52.79	39.06	226.19	52.83	38.81	63.39	53.12	36.93	23.19	53.47	35.0
