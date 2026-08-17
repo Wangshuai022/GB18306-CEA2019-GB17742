@@ -131,12 +131,13 @@ def param_info(p):
 
 
 def obs_col_candidates(info):
-    """实测列候选（水平向 _H 优先）"""
+    """实测列候选：EPA/EPV 优先（GB18306 的 PGA/PGV 实为 EPA/EPV），
+    没有再回退 PGA_H/PGV_H 或 PGA/PGV"""
     if info["kind"] == "intensity":
         return ["I"]
     if info["T"] == -1:
-        return ["PGA_H", "PGA"]
-    return ["PGV_H", "PGV"]
+        return ["EPA_H", "PGA_H", "PGA"]
+    return ["EPV_H", "PGV_H", "PGV"]
 
 
 # ==================== 数据读取 ====================
@@ -465,8 +466,7 @@ def plot_gb18306_vs_obs(
     Ms,
     region,
     strike,
-    epicenter=None,
-    macro_epicenter=None,
+    macro_epicenter,
     initial_epicenter=None,
     params=(-1, -2, "Intensity"),
     extent=400.0,
@@ -481,20 +481,15 @@ def plot_gb18306_vs_obs(
     """
     基于宏观震中，用 GB18306 预测并绘制"预测 vs 实测"4×N 综合图。
 
-    epicenter / macro_epicenter：宏观震中（反演/迭代得到的经纬度），
-        两者给一个即可（macro_epicenter 优先）；
+    macro_epicenter：宏观震中（反演/迭代得到的经纬度），必填；
     initial_epicenter：初始破裂点（发布值），仅作标记；
     fault_lon_mat / fault_lat_mat：断层面网格矩阵（第一行=上缘，
         最后一行=下缘），提供时在第一排绘制断层投影。
     """
     if axis not in ("长轴", "短轴"):
         raise ValueError("axis 只能是 '长轴' 或 '短轴'")
-    if macro_epicenter is not None:
-        epicenter = macro_epicenter
-    if epicenter is None:
-        raise ValueError("必须提供 epicenter 或 macro_epicenter（宏观震中）")
     C = compute_vs_obs(
-        data, epicenter, Ms, region, strike, params, extent, param_cols
+        data, macro_epicenter, Ms, region, strike, params, extent, param_cols
     )
     params, infos, labels = C["params"], C["infos"], C["labels"]
     obs, preds, aeqs, ress = C["obs"], C["preds"], C["aeqs"], C["ress"]
@@ -838,8 +833,7 @@ def export_gb18306_vs_obs_txt(
     Ms,
     region,
     strike,
-    epicenter=None,
-    macro_epicenter=None,
+    macro_epicenter,
     params=(-1, -2, "Intensity"),
     extent=400.0,
     max_dist=200.0,
@@ -851,10 +845,8 @@ def export_gb18306_vs_obs_txt(
         台站信息 + 每个参数：<参数>_obs / <参数>_pred /
         Repi_long_<参数>(km) / Repi_short_<参数>(km) / <参数>_res
     """
-    if macro_epicenter is not None:
-        epicenter = macro_epicenter
     C = compute_vs_obs(
-        data, epicenter, Ms, region, strike, params, extent, param_cols
+        data, macro_epicenter, Ms, region, strike, params, extent, param_cols
     )
     obs, labels = C["obs"], C["labels"]
     preds, aeqs, ress = C["preds"], C["aeqs"], C["ress"]
