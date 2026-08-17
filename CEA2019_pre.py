@@ -214,6 +214,16 @@ def fmt_psa(value):
 
 # 系数缓存：同一 (区域, 轴向, 周期, 震级) 只读一次 Excel
 _COEFF_CACHE = {}
+# 计算器实例缓存：同一 (区域, 轴向) 只读一次 Excel（避免逐周期重读文件）
+_INST_CACHE = {}
+
+
+def _get_cal(region_core, axis):
+    """取（并缓存）某区域、某轴向的 CEA2019 计算器实例"""
+    key = (region_core, axis)
+    if key not in _INST_CACHE:
+        _INST_CACHE[key] = CEA2019(region_core, axis)
+    return _INST_CACHE[key]
 
 
 def _period_coeffs(region_core, axis, period, M):
@@ -232,7 +242,7 @@ def _period_coeffs(region_core, axis, period, M):
     if key in _COEFF_CACHE:
         return _COEFF_CACHE[key]
 
-    cal = CEA2019(region_core, axis)
+    cal = _get_cal(region_core, axis)
     T = float(period)
     if T in (-1.0, 0.0):
         row = cal._get_coefficients(-1)  # PGA 行
@@ -723,30 +733,152 @@ def plot_period_fields(
     return fig, axs
 
 
+def plot_response_spectra_single(
+    regions, Ms, R, axis="长轴", periods=(0.01, 6.0), n=300, output_file=None
+):
+    """
+    画反应谱：多个分区在同一震中距 R、震级 Ms 下的 PSA(T) 曲线对比。
+
+    参数：
+        regions   分区列表，如 ["青藏区", "新疆区", "东部区", "中部区"]
+        Ms        面波震级
+        R         震中距（km）
+        axis      轴向："长轴" / "短轴"
+        periods   周期范围 (Tmin, Tmax)，默认 (0.01, 6.0)
+        n         周期采样点数（log 等距，默认 300）
+        output_file  图片文件名；不填自动命名
+
+    说明：
+        - 周期 0~0.04s 按 PGA(T=0) 与 PSA(0.04s) 线性插值；
+        - T > 6s 不外插，最多画到 6s；
+        - 纵轴 PSA 单位 cm/s²，横轴周期 log 轴。
+
+    返回：
+        fig, ax
+    """
+    rc_all = [_region_core(r) for r in regions]
+    t_min, t_max = periods
+    Ts = np.logspace(np.log10(t_min), np.log10(t_max), n)
+
+    cm2in = 1.0 / 2.54
+
+    fig, ax = plt.subplots(figsize=(12 * cm2in, 10 * cm2in))
+
+    for rc in rc_all:
+        vals = [_period_value(T, Ms, R, rc, axis)[0] for T in Ts]
+        ax.plot(Ts, vals, lw=1.6, label=f"{rc}区")
+
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    ax.set_xlim(t_min, t_max)
+    ax.set_xlabel("Period T (s)", fontsize=9)
+    ax.set_ylabel("PSA (cm/s²)", fontsize=9)
+    ax.set_title(
+        f"CEA2019 Response Spectra — {axis}，Ms = {Ms:g}，" f"R = {R:g} km",
+        fontsize=11,
+    )
+    ax.grid(True, which="both", linestyle="--", alpha=0.3)
+    ax.legend(loc="best", fontsize=9)
+    fig.tight_layout()
+
+    if output_file is None:
+        output_file = f"CEA2019_RS_{axis}_Ms{Ms:g}_R{R:g}.png"
+    fig.savefig(output_file, dpi=300, bbox_inches="tight")
+    print(f"图片已保存：{os.path.abspath(output_file)}")
+    return fig, ax
+
+
+def plot_response_spectra(
+    regions,
+    Ms,
+    R,
+    axes=("长轴", "短轴"),
+    periods=(0.01, 6.0),
+    n=300,
+    output_file=None,
+):
+    """
+    画反应谱：多个分区在同一震中距 R、震级 Ms 下的 PSA(T) 曲线对比。
+    1×2 子图：左 = 长轴，右 = 短轴。
+
+    参数：
+        regions   分区列表，如 ["青藏区", "新疆区", "东部区", "中部区"]
+        Ms        面波震级
+        R         震中距（km）
+        axes      要画的轴向，默认 ("长轴", "短轴")，每个轴向一个子图；
+                  只画一个轴向时传 "长轴" 或 ["长轴"] 即可
+        periods   周期范围 (Tmin, Tmax)，默认 (0.01, 6.0)
+        n         周期采样点数（log 等距，默认 300）
+        output_file  图片文件名；不填自动命名
+
+    说明：
+        - 周期 0~0.04s 按 PGA(T=0) 与 PSA(0.04s) 线性插值；
+        - T > 6s 不外插，最多画到 6s；
+        - 纵轴 PSA 单位 cm/s²，横轴周期 log 轴。
+
+    返回：
+        fig, axs  （axs 是一维数组，长度 = len(axes)）
+    """
+    cm2in = 1.0 / 2.54
+    if isinstance(axes, str):
+        axes = (axes,)
+
+    rc_all = [_region_core(r) for r in regions]
+    t_min, t_max = periods
+    Ts = np.logspace(np.log10(t_min), np.log10(t_max), n)
+
+    fig, axs = plt.subplots(
+        1, len(axes), figsize=(12 * len(axes) * cm2in, 10 * cm2in), sharey=True
+    )
+    if len(axes) == 1:
+        axs = [axs]
+
+    for ax, axis in zip(axs, axes):
+        for rc in rc_all:
+            vals = [_period_value(T, Ms, R, rc, axis)[0] for T in Ts]
+            ax.plot(Ts, vals, lw=1.6, label=f"{rc}区")
+
+        ax.set_xscale("log")
+        ax.set_yscale("log")
+        ax.set_xlim(t_min, t_max)
+        ax.set_xlabel("Period T (s)", fontsize=9)
+
+        ax.set_title(
+            f"CEA2019 Response Spectra — {axis}，Ms = {Ms:g}，R = {R:g} km",
+            fontsize=11,
+        )
+        ax.grid(True, which="both", linestyle="--", alpha=0.3)
+        ax.legend(loc="best", fontsize=9)
+
+    axs[0].set_ylabel("PSA (cm/s²)", fontsize=9)
+
+    fig.tight_layout()
+
+    if output_file is None:
+        output_file = f"CEA2019_RS_Ms{Ms:g}_R{R:g}.png"
+    fig.savefig(output_file, dpi=300, bbox_inches="tight")
+    print(f"图片已保存：{os.path.abspath(output_file)}")
+    return fig, axs
+
+
 def me():
     pass
 
 
 if __name__ == "__main__":
-    # ============ 演示：常用周期点 -1(PGA) -2(PGV) 0.3 1 3 6 ============
-
-    demo_ms = 7.5  # 面波震级
-    lon = 103.0  # 震中经度
-    lat = 25.0  # 震中纬度
-    strike = 90  # 走向：正北=0°，顺时针
-    region = "青藏区"  # 分区
-    periods = [-1, -2, 0.3, 1, 3, 6]  # 周期点
-    sta_lon = [103.1, 103.5, 104.5]
+    # ---- 常用周期点 -1(PGA) -2(PGV) 0.3 1 3 6 ============
+    periods = [-1, -2, 0.3, 1, 3, 6]
+    sta_lon = [103.0, 103.5, 102.5]  # 台站点
     sta_lat = [25.0, 25.2, 25.1]
-    R_max = 400  # 场范围半径（km）
+    R_max = 400  # 范围 km
 
-    # ① 台站预测
+    # ---- ① 台站预测
     res = predict_period_values(
-        lon=lon,
-        lat=lat,
-        strike=strike,
-        region=region,
-        Ms=demo_ms,
+        lon=103,
+        lat=25,
+        strike=90,
+        region="新疆区",
+        Ms=7.5,
         periods=periods,
         sta_lon=sta_lon,
         sta_lat=sta_lat,
@@ -754,25 +886,44 @@ if __name__ == "__main__":
     for k, v in res.items():
         print(f"{k:8s}", np.round(v, 2))
 
-    # ② 综合表 TXT
-    A100 = export_period_table(
-        lon=lon,
-        lat=lat,
-        strike=strike,
-        region=region,
-        Ms=demo_ms,
+    # ---- ② 综合表 TXT 导出
+    export_period_table(
+        lon=103,
+        lat=25,
+        strike=90,
+        region="新疆区",
+        Ms=7.5,
         periods=periods,
         sta_lon=sta_lon,
         sta_lat=sta_lat,
     )
 
-    # ③ 2×N 整合图（云图 + 衰减曲线）
+    # ---- ③ 2×N 整合图（参数云图 + 衰减曲线）
     plot_period_fields(
-        lon=lon,
-        lat=lat,
-        strike=strike,
-        region=region,
-        Ms=demo_ms,
+        lon=103,
+        lat=25,
+        strike=90,
+        region="新疆区",
+        Ms=7.5,
         periods=periods,
         extent=R_max,
+    )
+
+    # ---- ④ 反应谱：4 分区、Ms=7.5、R=30 km、周期 0.01~6s
+    # 长短轴总图
+    plot_response_spectra(
+        regions=["青藏区", "新疆区", "东部区", "中部区"],
+        Ms=7.5,
+        R=10,
+        axes=["长轴", "短轴"],
+        periods=(0.01, 6.0),
+    )
+
+    # 单个出图
+    plot_response_spectra_single(
+        regions=["青藏区", "新疆区", "东部区", "中部区"],
+        Ms=7.5,
+        R=10,
+        axis="长轴",
+        periods=(0.01, 6.0),
     )

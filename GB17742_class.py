@@ -31,6 +31,7 @@ import numpy as np
 # 让中文提示在 Windows 命令行里正常显示
 try:
     import sys
+
     sys.stdout.reconfigure(encoding="utf-8")
 except Exception:
     pass
@@ -89,8 +90,8 @@ class GB17742_2020_Cal_instrument_intensity:
         # 满足条件的位置取 min(I_V, 12)，不满足的位置取平均
         I0 = np.where(
             condition,
-            np.minimum(I_V, 12),   # 两个都高：用速度分量，最多 12 度
-            (I_V + I_A) / 2,       # 否则：取平均
+            np.minimum(I_V, 12),  # 两个都高：用速度分量，最多 12 度
+            (I_V + I_A) / 2,  # 否则：取平均
         )
 
         # 平均结果最低 1 度
@@ -122,6 +123,8 @@ class GB17742_2020_Cal_instrument_intensity:
 if __name__ == "__main__":
     # 自检：直接运行这个文件，看看输出对不对
     Cal = GB17742_2020_Cal_instrument_intensity
-    print("单个点 (PGA=100, PGV=10)：", Cal.cal_Intensity(100, 10))
+    print("单个点：", Cal.cal_Intensity(195, 17.7))
     print("多个点：", Cal.cal_Intensity_matrix([50, 100, 200], [5, 10, 20]))
-    print("只有 PGV：", Cal.cal_Intensity_matrix_PGV([5, 10, 20]))
+    print(
+        "只有 PGV：", Cal.cal_Intensity_matrix_PGV([5, 10, 20, 150, 200, 400])
+    )
