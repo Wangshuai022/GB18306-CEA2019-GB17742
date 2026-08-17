@@ -1,37 +1,41 @@
 # -*- coding: utf-8 -*-
 """
-CEA2019 预测 vs 实测 —— 基于给定震中的 4×N 综合绘图与统计表
-============================================================
-输入实测台站、初始震中、震级、分区、走向，用 CEA2019 衰减模型预测各台站
-地震动参数，与实测对比，输出一张 "4 排 × N 列"图（N = 参数个数）：
+GB18306 预测 vs 实测 —— 基于给定宏观震中的 4×N 综合绘图与统计表
+================================================================
+用 GB18306-2015 椭圆衰减预测各台站 PGA / PGV / 烈度，与实测对比，
+输出一张 "4 排 × N 列"图（N = 参数个数）：
 
-    排1  预测云图（观测点范围内，经纬度按公里取齐成近似方形）+ 实测散点
-    排2  衰减曲线（所选轴中值 ±1σ），X 距离 log 轴，1 ~ 最远椭圆距
-         （向上取整到 100 的整数 +100，最小 200 km），>200 km 浅灰填充
-    排3  残差（预测-实测，PGA/PGV/PSA 用自然对数 ln(Pred/Obs)，
-         烈度用线性差），X 距离线性轴，上限向上取整到 50 的倍数（最小 200 km）
+    排1  预测云图（观测点范围内，经纬度按公里取齐成近似方形）
+         + 实测散点（EI 三角 / HN 圆点，未区分则全圆点）
+         + 可选断层投影（Fault 矩阵：第一行=上缘，最后一行=下缘）
+         + 初始破裂点（发布值）与宏观震中（反演值）分开标记
+    排2  衰减曲线（所选轴中值 ±1σ），X 距离 log 轴，
+         1 ~ 最远椭圆距（向上取整到 100 的整数 +100，最小 200 km），
+         >200 km 浅灰填充
+    排3  残差（预测-实测：PGA/PGV 用自然对数 ln(Pred/Obs)，烈度用线性差），
+         X 距离线性轴，上限向上取整到 50 的倍数（最小 200 km）
     排4  残差分布三组：全部 / <200 km / ≥200 km（散点+半小提琴+箱线）
 
-参数按周期点定义（N 列）：
+参数按周期点定义：
     -1 或 0   → PGA（gal）
     -2        → PGV（cm/s）
-    数值周期  → PSA(T=0.30s) 等（cm/s²），标签保留 2 位小数
-    "Intensity" → 烈度（特殊：由 CEA2019 预测的 PGA/PGV 按 GB/T 17742 换算）
+    "Intensity" → 烈度（GB18306 烈度衰减直接预测）
+    （GB18306 无 PSA，不支持数值周期）
 
-台站标记：数据含 Instrument_Type 且同时出现 EI（烈度计）/ HN（强震仪）时，
-HN 用圆点、EI 用三角形；未区分则全部圆点。
-色标引用 CEA2019_pre.py：PGA/PSA 用 PGA 分界（PSA 按周期缩放），
-PGV 用 PGA÷10，烈度用 USGS MMI 十色 1~10 度。
+色标沿用 CEA2019_pre.py 的约定：PGA 用 PGA_LEVELS、PGV 用 PGV_LEVELS
+（PGA÷10）、烈度用 USGS MMI 十色 1~10 度。
 
 使用案例：
-    from CEA2019_vs_Obs import plot_cea2019_vs_obs, export_cea2019_vs_obs_txt
-    plot_cea2019_vs_obs(
-        data="台站文件.txt", epicenter=(87.378, 28.604),
+    from GB18306_vs_Obs import plot_gb18306_vs_obs
+    plot_gb18306_vs_obs(
+        data="台站文件.txt",
+        macro_epicenter=(87.612, 28.823),   # 宏观震中（反演得到）
+        initial_epicenter=(87.45, 28.5),    # 初始破裂点（发布值）
         Ms=6.8, region="青藏区", strike=349.0,
-        params=(-1, -2, 0.3, 1.0, "Intensity"),
-        outpath="CEA2019_vs_Obs.png",
+        params=(-1, -2, "Intensity"),
+        fault_lon_mat=lon_mat, fault_lat_mat=lat_mat,  # 可选断层投影
+        outpath="GB18306_vs_Obs.png",
     )
-    export_cea2019_vs_obs_txt(...)   # 台站统计表（第一行即表头）
 """
 
 from __future__ import annotations
@@ -56,39 +60,33 @@ except Exception:
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
+from GB18306_class import GB18306_2015_IntensityCal, GB18306_2015_PGA_PGV_GMMs
 from CEA2019_pre import (
     USGS_MMI_COLORS,
-    _period_levels,
-    period_label,
-    unit_label,
+    PGA_LEVELS,
+    PGV_LEVELS,
     fmt_pgv,
-    fmt_psa,
-    _region_core,
-    _period_coeffs,
-    _period_curves_sigma,
-    _ellipse_radii_for_period,
-    predict_period_values,
     km_to_lonlat,
 )
-from GB17742_class import GB17742_2020_Cal_instrument_intensity as CAL_INT
 from stat_violin import (
     apply_style,
     half_violin_box_scatter,
     fit_annotations_inside,
 )
 
-# ==================== 参数规范（按周期点） ====================
+SIGMA_GB18306 = {"pga": 0.236, "pgv": 0.271}
+
+
+# ==================== 参数规范（PGA / PGV / 烈度） ====================
 
 
 def normalize_params(params):
     """
     输入参数 → 统一列表：
-        -1 / 0              → -1（PGA）
-        -2                  → -2（PGV）
-        0.01 0.1 0.3 1 3 6  → 原周期（PSA）
-        字符串 "PGA"/"PGV"/"PSA(T=0.30s)" 同样接受
-        "Intensity"         → 烈度
-    自动去重（如同时传 -1 和 "PGA"）。
+        -1 / 0 / "PGA"  → -1（PGA）
+        -2 / "PGV"      → -2（PGV）
+        "Intensity"     → 烈度
+    GB18306 无 PSA，数值周期会报错。
     """
     out = []
     for p in params:
@@ -100,40 +98,45 @@ def normalize_params(params):
                 item = -1.0
             elif s == "PGV":
                 item = -2.0
-            elif s.lower().startswith("psa"):
-                item = float(s.split("(")[1].split("=")[1].rstrip("s)"))
             else:
-                raise ValueError(f"无法识别的参数：{p!r}")
+                raise ValueError(
+                    f"GB18306 不支持参数 {p!r}，仅支持 PGA/PGV/Intensity"
+                )
         else:
-            item = -1.0 if float(p) == 0.0 else float(p)
+            t = float(p)
+            if t in (-1.0, 0.0):
+                item = -1.0
+            elif t == -2.0:
+                item = -2.0
+            else:
+                raise ValueError(
+                    f"GB18306 无 PSA，不支持周期 {p!r}；仅支持 -1(PGA)/-2(PGV)/Intensity"
+                )
         if item not in out:
             out.append(item)
     return out
 
 
 def param_info(p):
-    """规范参数 → {label, kind, T, unit}；label 复用 period_label（两位小数）"""
+    """规范参数 → {label, kind, T}；kind：gmm（PGA/PGV）或 intensity"""
     if p == "Intensity":
         return {"label": "烈度", "kind": "intensity", "T": None, "unit": ""}
     t = float(p)
     return {
-        "label": period_label(t),
+        "label": "PGA" if t == -1 else "PGV",
         "kind": "gmm",
         "T": t,
-        "unit": unit_label(t),
+        "unit": "gal" if t == -1 else "cm/s",
     }
 
 
 def obs_col_candidates(info):
-    """实测列候选（水平向 _H 优先，其次 RotD50 / 原始列）"""
+    """实测列候选（水平向 _H 优先）"""
     if info["kind"] == "intensity":
         return ["I"]
     if info["T"] == -1:
         return ["PGA_H", "PGA"]
-    if info["T"] == -2:
-        return ["PGV_H", "PGV"]
-    tag = f"pSa(T={info['T']:.2f}s)"
-    return [f"{tag}_H", f"{tag}_RotD50", tag]
+    return ["PGV_H", "PGV"]
 
 
 # ==================== 数据读取 ====================
@@ -178,57 +181,211 @@ def load_obs_data(data, params, param_cols=None):
         )
         col = next((c for c in cands if c in df.columns), None)
         if col is None:
-            raise ValueError(
-                f"参数 {label}（周期 {info['T']}）找不到实测列，候选：{cands}"
-            )
+            raise ValueError(f"参数 {label} 找不到实测列，候选：{cands}")
         out[label] = pd.to_numeric(df[col], errors="coerce")
     return out.dropna(subset=["lon", "lat"]).reset_index(drop=True)
 
 
-# ==================== 预测 / 椭圆距 / 残差 ====================
+# ==================== GB18306 椭圆场前向模型（向量化） ====================
 
 
-def _predict_one(
-    param, lon, lat, strike, region, Ms, sta_lon, sta_lat, extent
-):
-    """用 CEA2019 预测单个参数在台站（或网格点）处的值"""
-    info = param_info(param)
-    if info["kind"] == "gmm":
-        lab = predict_period_values(
-            lon,
-            lat,
-            strike,
-            region,
-            Ms,
-            [info["T"]],
-            sta_lon,
-            sta_lat,
-            extent=extent,
+class GB18306EllipseField:
+    """
+    GB18306 椭圆场：台站相对长轴夹角 θ，在椭圆族 (a(V), b(V)) 上二分求预测值。
+    predict_many(lon, lat, strike, sta_lon, sta_lat) → (I, PGA, PGV, aI, bI, aA, bA, aV, bV)
+    """
+
+    def __init__(self, region: str, Ms: float, extent: float = 400.0):
+        self.region = region
+        self.Ms = float(Ms)
+        self.extent = float(extent)
+        self.cal_i = GB18306_2015_IntensityCal()
+        self.cal_g = GB18306_2015_PGA_PGV_GMMs()
+        self.cal_i._validate_input(region, "长轴")
+        self.cal_g._validate_input(region, "长轴")
+
+        self.IL = self.cal_i._PARAMS[(region, "长轴")]
+        self.IS = self.cal_i._PARAMS[(region, "短轴")]
+        self.sigma_I = self.IL[4]
+
+        self.gp = {}
+        for pt in ("aE", "vE"):
+            self.gp[pt] = {
+                "long": self.cal_g._get_params(self.Ms, region, "长轴", pt),
+                "short": self.cal_g._get_params(self.Ms, region, "短轴", pt),
+            }
+        self.I_lo = (
+            self.IL[0]
+            + self.IL[1] * self.Ms
+            + self.IL[2] * math.log10(self.extent + self.IL[3])
         )
-        return lab[period_label(info["T"])]
-    # 烈度：预测 PGA + PGV → GB/T 17742 仪器烈度
-    lab = predict_period_values(
-        lon, lat, strike, region, Ms, [-1, -2], sta_lon, sta_lat, extent=extent
+        self.I_hi = (
+            self.IL[0]
+            + self.IL[1] * self.Ms
+            + self.IL[2] * math.log10(self.IL[3])
+        )
+        self.lgV = {}
+        for pt in ("aE", "vE"):
+            pl = self.gp[pt]["long"]
+            exp_term = pl["D"] * math.exp(pl["E"] * self.Ms)
+            self.lgV[pt] = {
+                "lo": pl["A"]
+                + pl["B"] * self.Ms
+                + pl["C"] * math.log10(self.extent + exp_term),
+                "hi": pl["A"]
+                + pl["B"] * self.Ms
+                + pl["C"] * math.log10(exp_term),
+            }
+
+    def _ab_intensity(self, I):
+        A, B, C, R0 = self.IL[:4]
+        a = 10.0 ** ((I - A - B * self.Ms) / C) - R0
+        As, Bs, Cs, R0s = self.IS[:4]
+        b = 10.0 ** ((I - As - Bs * self.Ms) / Cs) - R0s
+        a = np.maximum(a, 1e-3)
+        b = np.maximum(np.minimum(b, a), 1e-3)
+        return a, b
+
+    def _ab_value(self, V, pt):
+        lg = np.log10(np.maximum(V, 1e-12))
+        pl, ps = self.gp[pt]["long"], self.gp[pt]["short"]
+        M = self.Ms
+        a = 10.0 ** ((lg - pl["A"] - pl["B"] * M) / pl["C"]) - pl[
+            "D"
+        ] * math.exp(pl["E"] * M)
+        b = 10.0 ** ((lg - ps["A"] - ps["B"] * M) / ps["C"]) - ps[
+            "D"
+        ] * math.exp(ps["E"] * M)
+        a = np.maximum(a, 1e-3)
+        b = np.maximum(np.minimum(b, a), 1e-3)
+        return a, b
+
+    @staticmethod
+    def _bisect(R, ct, st, ab_func, lo, hi, iters=60):
+        lo = np.full_like(R, lo)
+        hi = np.full_like(R, hi)
+        for _ in range(iters):
+            mid = (lo + hi) / 2.0
+            a, b = ab_func(mid)
+            f = (R * ct / a) ** 2 + (R * st / b) ** 2 - 1.0
+            lo = np.where(f < 0.0, mid, lo)
+            hi = np.where(f >= 0.0, mid, hi)
+        return (lo + hi) / 2.0
+
+    def _bisect_lgV(self, R, ct, st, pt, iters=60):
+        lo = np.full_like(R, self.lgV[pt]["lo"])
+        hi = np.full_like(R, self.lgV[pt]["hi"])
+        for _ in range(iters):
+            mid = (lo + hi) / 2.0
+            a, b = self._ab_value(10.0**mid, pt)
+            f = (R * ct / a) ** 2 + (R * st / b) ** 2 - 1.0
+            lo = np.where(f < 0.0, mid, lo)
+            hi = np.where(f >= 0.0, mid, hi)
+        return 10.0 ** ((lo + hi) / 2.0)
+
+    def predict_many(self, lon, lat, strike, sta_lon, sta_lat):
+        from pyproj import Transformer
+
+        lon = np.asarray(lon, dtype=float).ravel()
+        lat = np.asarray(lat, dtype=float).ravel()
+        sta_lon = np.asarray(sta_lon, dtype=float).ravel()
+        sta_lat = np.asarray(sta_lat, dtype=float).ravel()
+        n_cand, n_sta = lon.size, sta_lon.size
+        I_out = np.full((n_cand, n_sta), np.nan)
+        A_out = np.full((n_cand, n_sta), np.nan)
+        V_out = np.full((n_cand, n_sta), np.nan)
+        aI_out = np.full((n_cand, n_sta), np.nan)
+        bI_out = np.full((n_cand, n_sta), np.nan)
+        aA_out = np.full((n_cand, n_sta), np.nan)
+        bA_out = np.full((n_cand, n_sta), np.nan)
+        aV_out = np.full((n_cand, n_sta), np.nan)
+        bV_out = np.full((n_cand, n_sta), np.nan)
+
+        groups = {}
+        for i in range(n_cand):
+            zone = int((lon[i] + 180.0) // 6.0) + 1
+            hemi = 326 if lat[i] >= 0 else 327
+            groups.setdefault((hemi, zone), []).append(i)
+        for (hemi, zone), idx in groups.items():
+            fwd = Transformer.from_crs(
+                "epsg:4326", f"epsg:{hemi}{zone:02d}", always_xy=True
+            )
+            ex, ey = np.asarray(fwd.transform(lon[idx], lat[idx]), dtype=float)
+            sx, sy = np.asarray(fwd.transform(sta_lon, sta_lat), dtype=float)
+            dx = (sx[None, :] - ex[:, None]) / 1000.0
+            dy = (sy[None, :] - ey[:, None]) / 1000.0
+            R = np.hypot(dx, dy)
+            theta = np.arctan2(dy, dx) - math.radians(90.0 - strike)
+            ct, st = np.cos(theta), np.sin(theta)
+
+            a0, b0 = self._ab_intensity(self.I_lo)
+            r_outer = (
+                float(a0)
+                * float(b0)
+                / np.sqrt((float(b0) * ct) ** 2 + (float(a0) * st) ** 2)
+            )
+            inside = R <= r_outer
+            Ii = self._bisect(
+                R, ct, st, self._ab_intensity, self.I_lo, self.I_hi
+            )
+            aI, bI = self._ab_intensity(Ii)
+            I_out[idx, :] = np.where(inside, Ii, np.nan)
+            aI_out[idx, :] = np.where(inside, aI, np.nan)
+            bI_out[idx, :] = np.where(inside, bI, np.nan)
+
+            for pt, out in (("aE", A_out), ("vE", V_out)):
+                a0v, b0v = self._ab_value(10.0 ** self.lgV[pt]["lo"], pt)
+                r_outer_v = (
+                    float(a0v)
+                    * float(b0v)
+                    / np.sqrt((float(b0v) * ct) ** 2 + (float(a0v) * st) ** 2)
+                )
+                inside_v = R <= r_outer_v
+                Vi = self._bisect_lgV(R, ct, st, pt)
+                aV, bV = self._ab_value(Vi, pt)
+                out[idx, :] = np.where(inside_v, Vi, np.nan)
+                if pt == "aE":
+                    aA_out[idx, :] = np.where(inside_v, aV, np.nan)
+                    bA_out[idx, :] = np.where(inside_v, bV, np.nan)
+                else:
+                    aV_out[idx, :] = np.where(inside_v, aV, np.nan)
+                    bV_out[idx, :] = np.where(inside_v, bV, np.nan)
+        return (
+            I_out,
+            A_out,
+            V_out,
+            aI_out,
+            bI_out,
+            aA_out,
+            bA_out,
+            aV_out,
+            bV_out,
+        )
+
+    def predict(self, lon, lat, strike, sta_lon, sta_lat):
+        out = self.predict_many(
+            np.atleast_1d(lon), np.atleast_1d(lat), strike, sta_lon, sta_lat
+        )
+        return tuple(o[0] for o in out)
+
+
+# ==================== 预测 / 椭圆距 / 残差 / 色标 ====================
+
+
+def predict_one(param, field, lon, lat, strike, sta_lon, sta_lat):
+    """GB18306 单参数预测，返回 (预测值, 长轴距, 短轴距)"""
+    I, A, V, aI, bI, aA, bA, aV, bV = field.predict(
+        lon, lat, strike, sta_lon, sta_lat
     )
-    return CAL_INT.cal_Intensity_matrix(lab["PGA"], lab["PGV"])
+    if param == "Intensity":
+        return I, aI, bI
+    if float(param) == -1:
+        return A, aA, bA
+    return V, aV, bV
 
 
-def _a_eq(param, pred, region, Ms, preds):
-    """
-    预测值所在等值椭圆的长轴距 a / 短轴距 b（km）。
-    PGA/PGV/PSA 用各自预测值反算；烈度沿用 PGA 椭圆（烈度由 PGA/PGV 换算）。
-    """
-    rc = _region_core(region)
-    info = param_info(param)
-    if info["kind"] == "gmm":
-        a, b = _ellipse_radii_for_period(pred, info["T"], Ms, rc)
-    else:
-        a, b = _ellipse_radii_for_period(preds["PGA"], -1, Ms, rc)
-    return np.asarray(a, dtype=float), np.asarray(b, dtype=float)
-
-
-def _residual(pred, obs, kind):
-    """残差 = 预测 - 实测：PGA/PGV/PSA 用 ln(Pred/Obs)；烈度用线性差"""
+def residual(pred, obs, kind):
+    """残差 = 预测 - 实测：PGA/PGV 用 ln(Pred/Obs)，烈度用线性差"""
     if kind == "gmm":
         return np.log(
             np.asarray(pred, dtype=float) / np.asarray(obs, dtype=float)
@@ -236,76 +393,55 @@ def _residual(pred, obs, kind):
     return np.asarray(pred, dtype=float) - np.asarray(obs, dtype=float)
 
 
-# ==================== 色标 ====================
+def param_levels(info):
+    """色标分界：PGA → PGA_LEVELS，PGV → PGV_LEVELS，烈度 → MMI 十色 1~10"""
+    if info["kind"] == "intensity":
+        return np.arange(0.5, 11.5, 1.0)
+    return PGA_LEVELS if info["T"] == -1 else PGV_LEVELS
 
 
-def _param_levels(param, Ms, region_core):
-    """色标分界：PGA/PSA 用 _period_levels（PSA 按周期缩放），烈度用 MMI 十色 1~10"""
-    info = param_info(param)
-    if info["kind"] == "gmm":
-        return _period_levels(info["T"], Ms, region_core)
-    return np.arange(0.5, 11.5, 1.0)
-
-
-def _level_ticks(param, levels):
-    """(刻度位置, 刻度文字)：PGA 整数 / PGV 按 fmt_pgv / PSA 按 fmt_psa / 烈度整数"""
-    info = param_info(param)
+def level_ticks(info, levels):
+    """(刻度位置, 刻度文字)"""
     if info["kind"] == "intensity":
         pos = np.arange(1, 11)
         return pos, [f"{v:.0f}" for v in pos]
-    if info["T"] == -2:
-        return levels, [fmt_pgv(v) for v in levels]
-    if info["T"] in (-1, 0):
+    if info["T"] == -1:
         return levels, [f"{v:g}" for v in levels]
-    return levels, [fmt_psa(v) for v in levels]
+    return levels, [fmt_pgv(v) for v in levels]
 
 
-# ==================== 共享计算（绘图与 txt 共用，保证一致） ====================
-
-
-def _compute_vs_obs(
+def compute_vs_obs(
     data, epicenter, Ms, region, strike, params, extent, param_cols=None
 ):
-    """返回 观测/预测/椭圆距/残差 等全部结果（供绘图与导出共用）"""
+    """返回 观测/预测/椭圆距/残差 等全部结果（绘图与 txt 共用）"""
     params = normalize_params(params)
     if not params:
         raise ValueError(
-            "params 不能为空；支持 -1/0(PGA)、-2(PGV)、数值周期(PSA)、'Intensity'"
+            "params 不能为空；支持 -1/0(PGA)、-2(PGV)、'Intensity'"
         )
     infos = {p: param_info(p) for p in params}
     obs = load_obs_data(data, params, param_cols=param_cols)
     lon0, lat0 = float(epicenter[0]), float(epicenter[1])
     strike = strike % 360.0
-    rc = _region_core(region)
+    field = GB18306EllipseField(region, Ms, extent=extent)
 
-    preds = {
-        infos[p]["label"]: _predict_one(
+    preds, aeqs, ress = {}, {}, {}
+    for p in params:
+        info = infos[p]
+        val, a, b = predict_one(
             p,
+            field,
             lon0,
             lat0,
             strike,
-            region,
-            Ms,
             obs["lon"].values,
             obs["lat"].values,
-            extent,
         )
-        for p in params
-    }
-    aeqs = {
-        infos[p]["label"]: _a_eq(
-            p, preds[infos[p]["label"]], region, Ms, preds
+        preds[info["label"]] = val
+        aeqs[info["label"]] = (a, b)
+        ress[info["label"]] = residual(
+            val, obs[info["label"]].values, info["kind"]
         )
-        for p in params
-    }
-    ress = {
-        infos[p]["label"]: _residual(
-            preds[infos[p]["label"]],
-            obs[infos[p]["label"]].values,
-            infos[p]["kind"],
-        )
-        for p in params
-    }
     return {
         "params": params,
         "infos": infos,
@@ -317,34 +453,35 @@ def _compute_vs_obs(
         "lon0": lon0,
         "lat0": lat0,
         "strike": strike,
-        "rc": rc,
+        "field": field,
     }
 
 
-# ==================== 主绘图函数 ====================
+# ==================== 主绘图函数（4×N） ====================
 
 
-def plot_cea2019_vs_obs(
+def plot_gb18306_vs_obs(
     data,
-    epicenter,
     Ms,
     region,
     strike,
-    params=(-1, -2, 0.3, 1.0, "Intensity"),
+    epicenter=None,
+    macro_epicenter=None,
+    initial_epicenter=None,
+    params=(-1, -2, "Intensity"),
     extent=400.0,
     max_dist=200.0,
-    outpath="CEA2019_vs_Obs.png",
+    outpath="GB18306_vs_Obs.png",
     param_cols=None,
     grid_n=100,
     axis="长轴",
-    macro_epicenter=None,
-    initial_epicenter=None,
     fault_lon_mat=None,
     fault_lat_mat=None,
 ):
     """
-    基于给定震中，用 CEA2019 预测并绘制"预测 vs 实测"4×N 综合图。
-    epicenter / macro_epicenter：宏观震中（迭代/反演得到的经纬度），
+    基于宏观震中，用 GB18306 预测并绘制"预测 vs 实测"4×N 综合图。
+
+    epicenter / macro_epicenter：宏观震中（反演/迭代得到的经纬度），
         两者给一个即可（macro_epicenter 优先）；
     initial_epicenter：初始破裂点（发布值），仅作标记；
     fault_lon_mat / fault_lat_mat：断层面网格矩阵（第一行=上缘，
@@ -354,18 +491,18 @@ def plot_cea2019_vs_obs(
         raise ValueError("axis 只能是 '长轴' 或 '短轴'")
     if macro_epicenter is not None:
         epicenter = macro_epicenter
-    C = _compute_vs_obs(
+    if epicenter is None:
+        raise ValueError("必须提供 epicenter 或 macro_epicenter（宏观震中）")
+    C = compute_vs_obs(
         data, epicenter, Ms, region, strike, params, extent, param_cols
     )
     params, infos, labels = C["params"], C["infos"], C["labels"]
     obs, preds, aeqs, ress = C["obs"], C["preds"], C["aeqs"], C["ress"]
-    lon0, lat0, strike, rc = C["lon0"], C["lat0"], C["strike"], C["rc"]
+    lon0, lat0, strike, field = C["lon0"], C["lat0"], C["strike"], C["field"]
 
-    # 台站标记：区分 EI（烈度计，三角）/ HN（强震仪，圆）
     itype = obs["Instrument_Type"].str.upper().values
     use_markers = ("EI" in itype) and ("HN" in itype)
 
-    # 全局样式 + USGS 色标
     apply_style()
     plt.rcParams["font.family"] = ["Times New Roman", "Microsoft YaHei"]
     cmap = ListedColormap(USGS_MMI_COLORS, name="usgs_mmi")
@@ -382,14 +519,14 @@ def plot_cea2019_vs_obs(
         info = infos[p]
         label, kind, T = info["label"], info["kind"], info["T"]
         title = f"{label} ({info['unit']})" if info["unit"] else label
-        levels = _param_levels(p, Ms, rc)
+        levels = param_levels(info)
         norm = BoundaryNorm(levels, ncolors=len(USGS_MMI_COLORS))
-        tick_positions, tick_labels = _level_ticks(p, levels)
+        tick_positions, tick_labels = level_ticks(info, levels)
 
         pred, a_eq, b_eq, res = preds[label], *aeqs[label], ress[label]
         valid = np.isfinite(pred) & np.isfinite(obs[label].values)
 
-        # ================= 排1：预测云图 + 实测散点 =================
+        # ================= 排1：预测云图 + 实测散点 + 断层投影 =================
         ax = axes[0, i]
         c_lon = (obs["lon"].min() + obs["lon"].max()) / 2.0
         c_lat = (obs["lat"].min() + obs["lat"].max()) / 2.0
@@ -410,17 +547,9 @@ def plot_cea2019_vs_obs(
             c_lat - half_km / 110.57, c_lat + half_km / 110.57, grid_n
         )
         GLON, GLAT = np.meshgrid(glon, glat)
-        pred_grid = _predict_one(
-            p,
-            lon0,
-            lat0,
-            strike,
-            region,
-            Ms,
-            GLON.ravel(),
-            GLAT.ravel(),
-            extent,
-        ).reshape(GLON.shape)
+        pred_grid = predict_one(
+            p, field, lon0, lat0, strike, GLON.ravel(), GLAT.ravel()
+        )[0].reshape(GLON.shape)
         cf = ax.contourf(
             GLON,
             GLAT,
@@ -447,12 +576,19 @@ def plot_cea2019_vs_obs(
                 [flat[0], flat[:, -1], flat[-1][::-1], flat[:, 0][::-1]]
             )
             ax.fill(poly_lon, poly_lat, color="0.85", alpha=0.55, zorder=2)
-            ax.plot(flon[0], flat[0], color="tab:red", lw=1.6,
-                    zorder=3, label="断层上缘")
-            ax.plot(flon[-1], flat[-1], color="tab:blue", lw=1.6,
-                    zorder=3, label="断层下缘")
-            ax.plot(flon[:, 0], flat[:, 0], color="0.5", lw=0.8, zorder=3)
-            ax.plot(flon[:, -1], flat[:, -1], color="0.5", lw=0.8, zorder=3)
+            ax.plot(
+                flon[0], flat[0], color="r", lw=2.5, zorder=3, label="断层上缘"
+            )
+            ax.plot(
+                flon[-1],
+                flat[-1],
+                color="b",
+                lw=0.8,
+                zorder=3,
+                label="断层下缘",
+            )
+            ax.plot(flon[:, 0], flat[:, 0], color="k", lw=0.8, zorder=3)
+            ax.plot(flon[:, -1], flat[:, -1], color="k", lw=0.8, zorder=3)
 
         sel = valid & obs[label].notna().values
         if use_markers:
@@ -489,12 +625,20 @@ def plot_cea2019_vs_obs(
                 zorder=6,
             )
 
-        ax.plot(lon0, lat0, "k*", markersize=14, zorder=10,
-                label="宏观震中（反演）")
+        ax.plot(
+            lon0, lat0, "k*", markersize=9, zorder=10, label="宏观震中（反演）"
+        )
         if initial_epicenter is not None:
-            ax.plot(initial_epicenter[0], initial_epicenter[1],
-                    marker="*", markersize=12, color="magenta",
-                    markeredgecolor="white", zorder=10, label="初始破裂点")
+            ax.plot(
+                initial_epicenter[0],
+                initial_epicenter[1],
+                "*",
+                markersize=9,
+                color="magenta",
+                zorder=10,
+                label="初始破裂点",
+            )
+
         sr = math.radians(strike)
         arr_lon, arr_lat = km_to_lonlat(
             lon0, lat0, 80.0 * math.sin(sr), 80.0 * math.cos(sr), utm_zone
@@ -516,20 +660,27 @@ def plot_cea2019_vs_obs(
 
         # ================= 排2：衰减曲线（log 距离轴）=================
         ax = axes[1, i]
-        dist = a_eq if axis == "长轴" else b_eq  # 散点距离轴
+        dist = a_eq if axis == "长轴" else b_eq
         far = float(np.nanmax(dist[valid])) if valid.any() else 0.0
-        a_max = max(
-            200.0, math.ceil(far / 100.0) * 100.0 + 100.0
-        )  # 取整到100+100，最小200
+        a_max = max(200.0, math.ceil(far / 100.0) * 100.0 + 100.0)
         r_scan = np.arange(1.0, a_max + 1.0, 1.0)
-        if kind == "gmm":
-            lm, ll, lu = _period_curves_sigma(T, Ms, rc, axis, r_scan)
+        if kind == "intensity":
+            arr = [
+                field.cal_i.calculate(Ms, float(r), region, axis)
+                for r in r_scan
+            ]
+            lm = np.array([d["mean"] for d in arr])
+            ll = np.array([d["lower_1sigma"] for d in arr])
+            lu = np.array([d["upper_1sigma"] for d in arr])
         else:
-            pg_m, pg_lo, pg_up = _period_curves_sigma(-1, Ms, rc, axis, r_scan)
-            pv_m, pv_lo, pv_up = _period_curves_sigma(-2, Ms, rc, axis, r_scan)
-            lm = CAL_INT.cal_Intensity_matrix(pg_m, pv_m)
-            ll = CAL_INT.cal_Intensity_matrix(pg_lo, pv_lo)
-            lu = CAL_INT.cal_Intensity_matrix(pg_up, pv_up)
+            gmm = [
+                field.cal_g.calculate(Ms, float(r), region, axis)
+                for r in r_scan
+            ]
+            tup = [g[0 if T == -1 else 1] for g in gmm]
+            lm = np.array([t[0] for t in tup])
+            ll = np.array([t[1] for t in tup])
+            lu = np.array([t[2] for t in tup])
 
         ax.axvspan(max_dist, a_max, color="lightgray", alpha=0.55, zorder=0)
         ax.axvline(max_dist, color="0.4", ls=":", lw=1.0, zorder=1)
@@ -575,14 +726,14 @@ def plot_cea2019_vs_obs(
         # ================= 排3：残差（线性距离轴）=================
         ax = axes[2, i]
         far3 = float(np.nanmax(dist[valid])) if valid.any() else 0.0
-        x_max3 = max(
-            200.0, math.ceil(far3 / 50.0) * 50.0
-        )  # 取整到50的倍数，最小200
+        x_max3 = max(200.0, math.ceil(far3 / 50.0) * 50.0)
         ax.axvspan(max_dist, x_max3, color="lightgray", alpha=0.55, zorder=0)
         ax.axvline(max_dist, color="0.4", ls=":", lw=1.0, zorder=1)
         ax.axhline(0, color="k", lw=1.0, zorder=2)
         if kind == "gmm":
-            sigma_ln = _period_coeffs(rc, "长轴", T, Ms)[3] * math.log(10.0)
+            sigma_ln = SIGMA_GB18306["pga" if T == -1 else "pgv"] * math.log(
+                10.0
+            )
             ax.axhline(sigma_ln, color="gray", lw=0.8, ls="--")
             ax.axhline(
                 -sigma_ln,
@@ -643,7 +794,7 @@ def plot_cea2019_vs_obs(
         ax.set_title(f"{title} 残差分布", fontsize=9)
         ax.grid(True, axis="y", linestyle="--", alpha=0.3)
 
-    # 排4注释自适应：把 N/μ/m 文本框收进各自子图
+    # 排4注释自适应：N/μ/m 文本框收进子图
     try:
         fig.canvas.draw()
         for i in range(n):
@@ -652,7 +803,7 @@ def plot_cea2019_vs_obs(
         pass
 
     title_parts = [
-        "CEA2019 预测 vs 实测",
+        "GB18306 预测 vs 实测",
         f"宏观震中 ({lon0:.3f}, {lat0:.3f})",
         f"strike {strike:.0f}°",
         f"Ms {Ms:g}",
@@ -675,7 +826,6 @@ def plot_cea2019_vs_obs(
 
 
 def _fmt_num(v, nd=6):
-    """数值格式化：NaN/非有限值 → 'NaN'；浮点保留 nd 位有效数字"""
     try:
         v = float(v)
     except (TypeError, ValueError):
@@ -683,28 +833,27 @@ def _fmt_num(v, nd=6):
     return "NaN" if not np.isfinite(v) else f"{v:.{nd}g}"
 
 
-def export_cea2019_vs_obs_txt(
+def export_gb18306_vs_obs_txt(
     data,
-    epicenter,
     Ms,
     region,
     strike,
-    params=(-1, -2, 0.3, 1.0, "Intensity"),
+    epicenter=None,
+    macro_epicenter=None,
+    params=(-1, -2, "Intensity"),
     extent=400.0,
     max_dist=200.0,
-    outpath="CEA2019_vs_Obs_stats.txt",
+    outpath="GB18306_vs_Obs_stats.txt",
     param_cols=None,
 ):
     """
-    输出 1 个大的 txt（与绘图共用同一套计算），第一行即表头，
-    可直接 pd.read_csv(outpath, sep='\\t') 读取：
-        台站信息（Sta_ID / Sta_longi / Sta_lati / Instrument_Type）
-        + 每个参数 5 列：
-            <参数>_obs / <参数>_pred / Repi_long_<参数>(km) /
-            Repi_short_<参数>(km) / <参数>_res
-    残差与图一致：PGA/PGV/PSA 用 ln(预测/实测)，烈度用 预测-实测（线性）。
+    输出 1 个大的 txt（与绘图共用同一套计算），第一行即表头：
+        台站信息 + 每个参数：<参数>_obs / <参数>_pred /
+        Repi_long_<参数>(km) / Repi_short_<参数>(km) / <参数>_res
     """
-    C = _compute_vs_obs(
+    if macro_epicenter is not None:
+        epicenter = macro_epicenter
+    C = compute_vs_obs(
         data, epicenter, Ms, region, strike, params, extent, param_cols
     )
     obs, labels = C["obs"], C["labels"]
@@ -745,19 +894,13 @@ def export_cea2019_vs_obs_txt(
 
 # ---- 测试 ----
 if __name__ == "__main__":
-
-    os.makedirs("Test_output", exist_ok=True)
-
-    plot_cea2019_vs_obs(
+    plot_gb18306_vs_obs(
         data="20250107_China_Dingri_total_info_Bandpass_0.05_20Hz.txt",
-        epicenter=(87.45, 28.5),
+        macro_epicenter=(87.612, 28.823),
+        initial_epicenter=(87.45, 28.5),
         Ms=6.8,
-        region="青藏",
-        strike=187,
-        params=(-1, -2, 0.3, 1.0, 3, 6),
-        extent=500.0,
-        max_dist=200.0,
-        outpath="./Test_output/CEA2019_vs_Obs.png",
-        grid_n=100,
-        axis="短轴",
+        region="青藏区",
+        strike=349.0,
+        params=(-1, -2, "Intensity"),
+        outpath="Test_output/GB18306_vs_Obs.png",
     )
