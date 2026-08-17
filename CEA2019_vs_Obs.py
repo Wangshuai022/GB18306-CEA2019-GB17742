@@ -444,12 +444,20 @@ def plot_cea2019_vs_obs(
                 [flat[0], flat[:, -1], flat[-1][::-1], flat[:, 0][::-1]]
             )
             ax.fill(poly_lon, poly_lat, color="0.85", alpha=0.55, zorder=2)
-            ax.plot(flon[0], flat[0], color="tab:red", lw=1.6,
-                    zorder=3, label="断层上缘")
-            ax.plot(flon[-1], flat[-1], color="tab:blue", lw=1.6,
-                    zorder=3, label="断层下缘")
-            ax.plot(flon[:, 0], flat[:, 0], color="0.5", lw=0.8, zorder=3)
-            ax.plot(flon[:, -1], flat[:, -1], color="0.5", lw=0.8, zorder=3)
+
+            ax.plot(
+                flon[0], flat[0], color="r", lw=2.5, zorder=3, label="断层上缘"
+            )
+            ax.plot(
+                flon[-1],
+                flat[-1],
+                color="b",
+                lw=0.8,
+                zorder=3,
+                label="断层下缘",
+            )
+            ax.plot(flon[:, 0], flat[:, 0], color="k", lw=0.8, zorder=3)
+            ax.plot(flon[:, -1], flat[:, -1], color="k", lw=0.8, zorder=3)
 
         sel = valid & obs[label].notna().values
         if use_markers:
@@ -486,12 +494,17 @@ def plot_cea2019_vs_obs(
                 zorder=6,
             )
 
-        ax.plot(lon0, lat0, "k*", markersize=14, zorder=10,
-                label="宏观震中（反演）")
+        ax.plot(lon0, lat0, "k*", markersize=9, zorder=10, label="宏观震中")
         if initial_epicenter is not None:
-            ax.plot(initial_epicenter[0], initial_epicenter[1],
-                    marker="*", markersize=12, color="magenta",
-                    markeredgecolor="white", zorder=10, label="初始破裂点")
+            ax.plot(
+                initial_epicenter[0],
+                initial_epicenter[1],
+                "*",
+                markersize=9,
+                color="magenta",
+                zorder=10,
+                label="初始破裂点",
+            )
         sr = math.radians(strike)
         arr_lon, arr_lat = km_to_lonlat(
             lon0, lat0, 80.0 * math.sin(sr), 80.0 * math.cos(sr), utm_zone
@@ -580,12 +593,12 @@ def plot_cea2019_vs_obs(
         ax.axhline(0, color="k", lw=1.0, zorder=2)
         if kind == "gmm":
             sigma_ln = _period_coeffs(rc, "长轴", T, Ms)[3] * math.log(10.0)
-            ax.axhline(sigma_ln, color="gray", lw=0.8, ls="--")
+            ax.axhline(sigma_ln, color="r", lw=1.3, ls="-.")
             ax.axhline(
                 -sigma_ln,
-                color="gray",
-                lw=0.8,
-                ls="--",
+                color="r",
+                lw=1.3,
+                ls="-.",
                 label=f"±1σ = ±{sigma_ln:.3f} (ln)",
             )
         if use_markers:
@@ -629,10 +642,14 @@ def plot_cea2019_vs_obs(
             ("≥200 km", res[valid & (dist >= max_dist)]),
         ]
         colors_g = ["#1f77b4", "#2ca02c", "#d62728"]
+        ax.axhline(0, color="k", lw=1.0, zorder=0)  # 零线放底层
         for xpos, (_, gdata), gcol in zip(range(3), groups, colors_g):
             half_violin_box_scatter(
                 ax, gdata, xpos, gcol, value_fmt="{:.3f}", s=18
             )
+        if kind == "gmm":
+            ax.axhline(sigma_ln, color="r", lw=1.3, ls="-.")
+            ax.axhline(-sigma_ln, color="r", lw=1.3, ls="-.")
         ax.set_xticks([0, 1, 2])
         ax.set_xticklabels(["全部", "<200 km", "≥200 km"])
         ax.set_xlim(-0.6, 2.6)
