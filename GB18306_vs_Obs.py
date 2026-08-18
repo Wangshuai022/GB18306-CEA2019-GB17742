@@ -340,6 +340,7 @@ def plot_gb18306_vs_obs(
     axis="长轴",
     fault_lon_mat=None,
     fault_lat_mat=None,
+    plot_observations=None,
 ):
     """绘制 GB18306 的 4×N 预测—观测综合图。
 
@@ -374,6 +375,11 @@ def plot_gb18306_vs_obs(
         衰减曲线横坐标使用的等效椭圆距离。
     fault_lon_mat, fault_lat_mat : array-like or None
         二维断层网格经纬度；第一/末行作为上下缘。必须同时提供或同时省略。
+    plot_observations : {None, "corrected", "raw"}, default None
+        场地修正观测的绘图模式。None 表示原样使用 ``data``；``corrected``
+        使用 ``Vs30_site_correction.correct_observations_to_reference_vs30``
+        生成的参考场地观测；``raw`` 从该表的 ``*_raw`` 列恢复原始场地观测。
+        本参数只控制图上的观测点和绘图残差，不进行震中反演。
 
     Returns
     -------
@@ -390,6 +396,15 @@ def plot_gb18306_vs_obs(
         raise ValueError("axis 只能是 '长轴' 或 '短轴'")
     if (fault_lon_mat is None) != (fault_lat_mat is None):
         raise ValueError("fault_lon_mat 与 fault_lat_mat 必须同时提供或同时省略")
+    if plot_observations is not None:
+        if not isinstance(data, pd.DataFrame):
+            raise TypeError(
+                "plot_observations 只能用于包含场地修正审计列的 pandas.DataFrame；"
+                "文件路径输入请先调用 correct_observations_to_reference_vs30"
+            )
+        from Vs30_site_correction import prepare_site_plot_observations
+
+        data = prepare_site_plot_observations(data, plot_observations)
     C = compute_vs_obs(
         data, macro_epicenter, Ms, region, strike, params, extent, param_cols
     )
