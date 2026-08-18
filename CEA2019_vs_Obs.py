@@ -120,23 +120,46 @@ def param_info(p):
 
 
 def obs_col_candidates(info):
-    """实测列候选：EPA/EPV 优先（PGA/PGV 实为 EPA/EPV），没有再回退
-    PGA_H/PGV_H 或 PGA/PGV；PSA 用水平向 _H，其次 RotD50"""
+    """实测列候选：RotD50 → H → 有效值 RotD50 → 有效值 H。"""
     if info["kind"] == "intensity":
         return ["I"]
     if info["T"] == -1:
-        return ["EPA_H", "PGA_H", "PGA"]
+        return ["PGA_RotD50", "PGA_H", "EPA_RotD50", "EPA_H"]
     if info["T"] == -2:
-        return ["EPV_H", "PGV_H", "PGV"]
+        return ["PGV_RotD50", "PGV_H", "EPV_RotD50", "EPV_H"]
     tag = f"pSa(T={info['T']:.2f}s)"
-    return [f"{tag}_H", f"{tag}_RotD50", tag]
+    return [f"{tag}_RotD50", f"{tag}_H"]
 
 
 # ==================== 数据读取 ====================
 
 
 def load_obs_data(data, params, param_cols=None):
-    """读取实测数据（路径或 DataFrame）→ Sta_ID/lon/lat/Instrument_Type/各参数实测列"""
+    """读取并规范化 CEA2019 预测—观测对比所需的台站数据。
+
+    Parameters
+    ----------
+    data : str, os.PathLike or pandas.DataFrame
+        制表符分隔文件或内存表。经纬度支持 ``longi/lati``、``lon/lat``。
+    params : sequence
+        -1=PGA、-2=PGV、正数=PSA 周期（s）、``"Intensity"``=仪器烈度。
+    param_cols : dict or None
+        可选显式列映射。默认 PGA/PGV 按 RotD50、H、有效值 RotD50、
+        有效值 H 选择，PSA 按 RotD50、H 选择。
+
+    Returns
+    -------
+    pandas.DataFrame
+        标准化台站表。非正地震动值转为 NaN，但不会因单个参数缺测删除整行；
+        原始列来源保存在 ``attrs["source_columns"]``。
+
+    Raises
+    ------
+    TypeError
+        ``data`` 类型不支持。
+    ValueError
+        坐标列或请求的观测列缺失，或没有有效台站坐标。
+    """
     if isinstance(data, (str, os.PathLike)):
         df = pd.read_csv(str(data), sep="\t", encoding="utf-8")
     elif isinstance(data, pd.DataFrame):
@@ -146,7 +169,9 @@ def load_obs_data(data, params, param_cols=None):
     df.columns = [str(c).strip() for c in df.columns]
     df = df.rename(columns={"longi": "lon", "lati": "lat"})
     if "lon" not in df.columns or "lat" not in df.columns:
-        raise ValueError(f"缺少 lon/lat 列，现有列：{list(df.columns)[:20]}...")
+        raise ValueError(
+            f"缺少 lon/lat 列，现有列：{list(df.columns)[:20]}..."
+        )
     if "Sta_ID" not in df.columns:
         df["Sta_ID"] = [f"S{i + 1}" for i in range(len(df))]
 
@@ -190,7 +215,9 @@ def load_obs_data(data, params, param_cols=None):
 # ==================== 预测 / 椭圆距 / 残差 ====================
 
 
-def _predict_one(param, lon, lat, strike, region, Ms, sta_lon, sta_lat, extent):
+def _predict_one(
+    param, lon, lat, strike, region, Ms, sta_lon, sta_lat, extent
+):
     """用 CEA2019 预测单个参数在台站（或网格点）处的值"""
     info = param_info(param)
     if info["kind"] == "gmm":
@@ -230,7 +257,9 @@ def _a_eq(param, pred, region, Ms, preds):
 def _residual(pred, obs, kind):
     """残差 = 预测 - 实测：PGA/PGV/PSA 用 ln(Pred/Obs)；烈度用线性差"""
     if kind == "gmm":
-        return np.log(np.asarray(pred, dtype=float) / np.asarray(obs, dtype=float))
+        return np.log(
+            np.asarray(pred, dtype=float) / np.asarray(obs, dtype=float)
+        )
     return np.asarray(pred, dtype=float) - np.asarray(obs, dtype=float)
 
 
@@ -264,7 +293,14 @@ def _level_ticks(param, levels):
 def _compute_vs_obs(
     data, epicenter, Ms, region, strike, params, extent, param_cols=None
 ):
-    """返回 观测/预测/椭圆距/残差 等全部结果（供绘图与导出共用）"""
+    """集中计算 CEA2019 的观测、预测、椭圆距和残差。
+
+    这是绘图与文本导出的共享实现，保证两种输出使用完全相同的观测列、
+    椭圆场和残差定义。``epicenter`` 为宏观震中经纬度，``Ms`` 为模型震级，
+    ``strike`` 单位为度，``extent`` 单位为 km。返回字典包含规范周期、观测表、
+    各参数预测、长短轴距、残差、共享 ``CEA2019EllipseField`` 和列来源。
+    地震动残差为 ``ln(pred/obs)``，烈度残差为 ``pred-obs``。
+    """
     params = normalize_params(params)
     if not params:
         raise ValueError(
@@ -345,17 +381,56 @@ def plot_cea2019_vs_obs(
     fault_lon_mat=None,
     fault_lat_mat=None,
 ):
-    """
-    基于给定震中，用 CEA2019 预测并绘制"预测 vs 实测"4×N 综合图。
-    macro_epicenter：宏观震中（迭代/反演得到的经纬度），必填；
-    initial_epicenter：初始破裂点（发布值），仅作标记；
-    fault_lon_mat / fault_lat_mat：断层面网格矩阵（第一行=上缘，
-        最后一行=下缘），提供时在第一排绘制断层投影。
+    """绘制 CEA2019 的 4×N 预测—观测综合图。
+
+    Parameters
+    ----------
+    data : str, os.PathLike or pandas.DataFrame
+        台站观测。DataFrame attrs 可携带 Vs30 绘图状态，标题会明确标注。
+    macro_epicenter : tuple(float, float)
+        用于前向预测的宏观震中经纬度。
+    Ms : float
+        CEA2019 衰减关系使用的震级。
+    region : str
+        CEA2019 分区名称。
+    strike : float
+        椭圆长轴走向，单位度。
+    params : sequence
+        -1=PGA、-2=PGV、正数=PSA 周期、``"Intensity"``=仪器烈度。
+    extent : float, default 400
+        椭圆场最大范围，单位 km。
+    max_dist : float, default 200
+        近场/远场残差分组阈值，单位 km。
+    outpath : str or os.PathLike
+        PNG 输出路径。
+    param_cols : dict or None
+        可选显式观测列映射。
+    grid_n : int, default 100
+        每个方向的绘图网格点数。
+    axis : {"长轴", "短轴"}, default "长轴"
+        衰减曲线横坐标采用的等效距离。
+    initial_epicenter : tuple(float, float) or None
+        初始破裂点，仅作地图标记。
+    fault_lon_mat, fault_lat_mat : array-like or None
+        二维断层网格经纬度，必须同时提供或同时省略。
+
+    Returns
+    -------
+    str or os.PathLike
+        原样返回 ``outpath``。四排依次为地图、衰减曲线、残差—距离和
+        全部/近场/远场残差分布。
+
+    Raises
+    ------
+    ValueError
+        轴类型非法、断层矩阵未成对提供或请求参数/观测列无效。
     """
     if axis not in ("长轴", "短轴"):
         raise ValueError("axis 只能是 '长轴' 或 '短轴'")
     if (fault_lon_mat is None) != (fault_lat_mat is None):
-        raise ValueError("fault_lon_mat 与 fault_lat_mat 必须同时提供或同时省略")
+        raise ValueError(
+            "fault_lon_mat 与 fault_lat_mat 必须同时提供或同时省略"
+        )
     C = _compute_vs_obs(
         data, macro_epicenter, Ms, region, strike, params, extent, param_cols
     )
@@ -394,8 +469,12 @@ def plot_cea2019_vs_obs(
         * 1.25
     )
     half_km = max(half_km, 40.0)
-    glon = np.linspace(c_lon - half_km / clon_km, c_lon + half_km / clon_km, grid_n)
-    glat = np.linspace(c_lat - half_km / 110.57, c_lat + half_km / 110.57, grid_n)
+    glon = np.linspace(
+        c_lon - half_km / clon_km, c_lon + half_km / clon_km, grid_n
+    )
+    glat = np.linspace(
+        c_lat - half_km / 110.57, c_lat + half_km / 110.57, grid_n
+    )
     GLON, GLAT = np.meshgrid(glon, glat)
     grid_periods = [infos[p]["T"] for p in params if infos[p]["kind"] == "gmm"]
     if any(infos[p]["kind"] == "intensity" for p in params):
@@ -410,7 +489,9 @@ def plot_cea2019_vs_obs(
         if info["kind"] == "gmm":
             values = grid_raw[float(info["T"])][0]
         else:
-            values = CAL_INT.cal_Intensity_matrix(grid_raw[-1.0][0], grid_raw[-2.0][0])
+            values = CAL_INT.cal_Intensity_matrix(
+                grid_raw[-1.0][0], grid_raw[-2.0][0]
+            )
         grid_values[info["label"]] = values.reshape(GLON.shape)
 
     for i, p in enumerate(params):
@@ -436,7 +517,9 @@ def plot_cea2019_vs_obs(
             norm=norm,
             extend="both",
         )
-        cb = fig.colorbar(cf, ax=ax, ticks=tick_positions, pad=0.03, shrink=0.85)
+        cb = fig.colorbar(
+            cf, ax=ax, ticks=tick_positions, pad=0.03, shrink=0.85
+        )
         cb.ax.set_yticklabels(tick_labels)
         cb.set_label(title, fontsize=8)
 
@@ -452,7 +535,9 @@ def plot_cea2019_vs_obs(
             )
             ax.fill(poly_lon, poly_lat, color="0.85", alpha=0.55, zorder=2)
 
-            ax.plot(flon[0], flat[0], color="r", lw=2.5, zorder=3, label="断层上缘")
+            ax.plot(
+                flon[0], flat[0], color="r", lw=2.5, zorder=3, label="断层上缘"
+            )
             ax.plot(
                 flon[-1],
                 flat[-1],
@@ -549,7 +634,9 @@ def plot_cea2019_vs_obs(
         ax.axvspan(max_dist, a_max, color="lightgray", alpha=0.55, zorder=0)
         ax.axvline(max_dist, color="0.4", ls=":", lw=1.0, zorder=1)
         ax.plot(r_scan, lm, color="tab:red", lw=1.5, label=f"{axis}中值")
-        ax.fill_between(r_scan, ll, lu, color="tab:red", alpha=0.15, label=f"{axis}±1σ")
+        ax.fill_between(
+            r_scan, ll, lu, color="tab:red", alpha=0.15, label=f"{axis}±1σ"
+        )
         ax.set_xscale("log")
         if kind == "gmm":
             ax.set_yscale("log")
@@ -588,7 +675,9 @@ def plot_cea2019_vs_obs(
         # ================= 排3：残差（线性距离轴）=================
         ax = axes[2, i]
         far3 = float(np.nanmax(dist[valid])) if valid.any() else 0.0
-        x_max3 = max(200.0, math.ceil(far3 / 50.0) * 50.0)  # 取整到50的倍数，最小200
+        x_max3 = max(
+            200.0, math.ceil(far3 / 50.0) * 50.0
+        )  # 取整到50的倍数，最小200
         ax.axvspan(max_dist, x_max3, color="lightgray", alpha=0.55, zorder=0)
         ax.axvline(max_dist, color="0.4", ls=":", lw=1.0, zorder=1)
         ax.axhline(0, color="k", lw=1.0, zorder=2)
@@ -645,7 +734,9 @@ def plot_cea2019_vs_obs(
         colors_g = ["#1f77b4", "#2ca02c", "#d62728"]
         ax.axhline(0, color="k", lw=1.0, zorder=0)  # 零线放底层
         for xpos, (_, gdata), gcol in zip(range(3), groups, colors_g):
-            half_violin_box_scatter(ax, gdata, xpos, gcol, value_fmt="{:.3f}", s=18)
+            half_violin_box_scatter(
+                ax, gdata, xpos, gcol, value_fmt="{:.3f}", s=18
+            )
         if kind == "gmm":
             ax.axhline(sigma_ln, color="r", lw=1.3, ls="-.")
             ax.axhline(-sigma_ln, color="r", lw=1.3, ls="-.")
@@ -673,6 +764,18 @@ def plot_cea2019_vs_obs(
             2,
             f"初始破裂点 ({initial_epicenter[0]:.3f}, {initial_epicenter[1]:.3f})",
         )
+    if isinstance(data, pd.DataFrame):
+        site_plot_mode = data.attrs.get("site_plot_observations")
+        if site_plot_mode == "raw":
+            title_parts.append(
+                "原始场地观测（仅绘图，反演仍使用 Vs30 修正值）"
+            )
+        elif "site_reference_vs30" in data.attrs:
+            site_model = data.attrs.get("site_correction_model", "场地模型")
+            site_vs30 = float(data.attrs["site_reference_vs30"])
+            title_parts.append(
+                f"观测已按 {site_model} 统一至 Vs30={site_vs30:g} m/s"
+            )
     fig.suptitle("  |  ".join(title_parts), fontsize=14)
     fig.tight_layout(rect=(0, 0, 1, 0.965))
     fig.savefig(outpath, dpi=200, bbox_inches="tight")
@@ -705,14 +808,26 @@ def export_cea2019_vs_obs_txt(
     outpath="CEA2019_vs_Obs_stats.txt",
     param_cols=None,
 ):
-    """
-    输出 1 个大的 txt（与绘图共用同一套计算），第一行即表头，
-    可直接 pd.read_csv(outpath, sep='\\t') 读取：
-        台站信息（Sta_ID / Sta_longi / Sta_lati / Instrument_Type）
-        + 每个参数 5 列：
-            <参数>_obs / <参数>_pred / Repi_long_<参数>(km) /
-            Repi_short_<参数>(km) / <参数>_res
-    残差与图一致：PGA/PGV/PSA 用 ln(预测/实测)，烈度用 预测-实测（线性）。
+    """导出 CEA2019 逐台站预测—观测统计表。
+
+    Parameters
+    ----------
+    data, macro_epicenter, Ms, region, strike, params, extent, param_cols
+        与 ``plot_cea2019_vs_obs`` 中同名参数含义一致。
+    max_dist : float, default 200
+        保留为与绘图接口一致的分组阈值；文本表输出全部台站。
+    outpath : str or os.PathLike
+        制表符分隔文本路径，使用 UTF-8 BOM 编码。
+
+    Returns
+    -------
+    str or os.PathLike
+        原样返回 ``outpath``。表包含台站信息以及每个参数的观测、预测、
+        长轴距、短轴距和残差，可用 ``pandas.read_csv(..., sep="\\t")`` 读取。
+
+    Notes
+    -----
+    PGA/PGV/PSA 残差为 ``ln(预测/实测)``；烈度残差为线性差。
     """
     C = _compute_vs_obs(
         data, macro_epicenter, Ms, region, strike, params, extent, param_cols
@@ -760,14 +875,14 @@ if __name__ == "__main__":
 
     plot_cea2019_vs_obs(
         data="20250107_China_Dingri_total_info_Bandpass_0.05_20Hz.txt",
-        macro_epicenter=(87.45, 28.5),
+        macro_epicenter=(87.5686, 28.9874),  # 87.5686,28.9874
         Ms=6.8,
         region="青藏",
         strike=187,
         params=(-1, -2, 0.3, 1.0, 3, 6),
         extent=500.0,
         max_dist=200.0,
-        outpath="./Test_output/CEA2019_vs_Obs.png",
+        outpath="./Test_output/CEA2019_vs_Obs1111.png",
         grid_n=100,
         axis="短轴",
     )
