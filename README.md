@@ -13,8 +13,8 @@
 
 | 程序 | V1.0 修改内容 |
 |---|---|
-| `GB18306_vs_Obs.py` | `[功能]` PGA/PGV 改为 RotD50 四级优先；公共绘图函数新增 `plot_observations`，可对场地修正 DataFrame 显式选择 `corrected/raw`，并在标题标明状态。`[文档]` 补充输入、输出、单位和残差定义。 |
-| `CEA2019_vs_Obs.py` | `[功能]` PGA、PGV、PSA 改为 RotD50 优先；公共绘图函数新增 `plot_observations` 并显示场地观测状态。`[文档]` 补充多参数接口说明。 |
+| `GB18306_vs_Obs.py` | `[功能]` PGA/PGV 改为 RotD50 四级优先；公共绘图函数新增 `plot_observations`，可对场地修正 DataFrame 显式选择 `corrected/raw`，并在标题标明状态；第四排残差分布标注 N、μ、m、σ 和 RMS；每次出图自动写出同名逐台站TXT。`[文档]` 补充输入、输出、单位和残差定义。 |
+| `CEA2019_vs_Obs.py` | `[功能]` PGA、PGV、PSA 改为 RotD50 优先；公共绘图函数新增 `plot_observations` 并显示场地观测状态；第四排残差分布标注 N、μ、m、σ 和 RMS；每次出图自动写出同名逐台站TXT。`[文档]` 补充多参数接口说明。 |
 | `GB18306_epicenter_inversion.py` | `[功能]` 反演观测列改为 RotD50 四级优先。sigma 加权 chi2、断层约束和返回结构是原有实现，本轮只补充其说明。 |
 | `CEA2019_epicenter_inversion.py` | `[功能]` 通过 `CEA2019_vs_Obs.load_obs_data` 继承新的 RotD50 优先级。多参数 chi2 反演算法未改，本轮补充返回结果和有效样本说明。 |
 | `Vs30_site_correction.py` | 新增中国 Vs30 大文件分块查询、CB14 非线性 A1100 反解、PGA/PGV/PSA 到参考 Vs30 的统一换算和逐台站审计表。 |
@@ -26,9 +26,9 @@
 | `Leonard2014_fitted_by_SMD_crust.py` | `[文档]` 明确既有定标率函数的类型、L/W/A/D 单位及不确定性返回格式；系数未改。 |
 | `mesh_single_rectangular_finite_fault.py` | `[文档]` 说明既有 `dhypo=0.57W` 默认值和地表出露整体下移策略；本轮没有改变网格算法。 |
 | `fault_distance_azimuth_single_multi.py` | `[文档]` 补充既有 Rrup/Rjb/Rx/方位角入口的坐标单位、符号约定和返回结构；距离算法未改。 |
-| `stat_violin.py` | `[文档]` 补充既有半小提琴、箱线、散点和注释自适应接口；绘图算法未改。 |
+| `stat_violin.py` | `[功能]` 共用残差统计框由 N、μ、m 扩展为 N、μ、m、总体标准差 σ 和均方根 RMS；保留注释框自适应，避免新增两行被裁切。 |
 | `GB18306_Intensity_Compare.py` | `[文档]` 补充既有烈度对比程序的运行方式和输出文件说明；计算未改。 |
-| `tests/test_models.py`、`tests/test_vs30_inversion.py`、`tests/test_release_contracts.py` | 增加 RotD50 四级回退、模型正反算、断层网格、CB14/A1100、Vs30 换算、公共函数签名及 corrected/raw 调用链回归测试。 |
+| `tests/test_models.py`、`tests/test_vs30_inversion.py`、`tests/test_release_contracts.py`、`tests/test_stat_violin.py` | 增加 RotD50 四级回退、模型正反算、断层网格、CB14/A1100、Vs30 换算、公共函数签名、corrected/raw 调用链及第四排 σ/RMS 数值回归测试。 |
 
 本表只列本次有实质修改或新增的程序。原有 `GB18306_class.py`、
 `CEA2019_class.py`、`GB18306_Pre.py` 和 `CEA2019_pre.py` 保持模型实现不变，
@@ -125,6 +125,12 @@ plot_cea2019_vs_obs(
     outpath="CEA2019_initial_vs_obs.png",
 )
 ```
+
+上述调用会同时生成 `CEA2019_initial_vs_obs.png` 和
+`CEA2019_initial_vs_obs.txt`。TXT采用UTF-8 BOM、制表符分隔，逐台站保存观测、
+预测、长轴距、短轴距和残差，可用
+`pandas.read_csv("CEA2019_initial_vs_obs.txt", sep="\t")` 直接读取。需要自定义
+表格路径时传入 `table_outpath="自定义路径.txt"`。GB18306接口行为相同。
 
 ### 3. 反演宏观震中并自动绘制残差图
 
