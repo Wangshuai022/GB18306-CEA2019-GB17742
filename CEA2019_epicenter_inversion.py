@@ -19,7 +19,7 @@ CEA2019 震中反演 —— 基于 CEA2019 椭圆衰减，断层网格约束反�
     1) 优先外部断层网格 fault_lon_mat / fault_lat_mat（二维矩阵，
        第一行=上缘、最后一行=下缘），提供时直接作为反演范围（跳过 L14）；
     2) 否则用 Leonard2014（SMD 修正版）中位 L/W + 矩形有限断层，
-       shypo/dhypo 相对断层上缘（km），默认 None → 0 / 0.56*W；
+       shypo/dhypo 相对断层上缘（km），默认 None → 0 / 0.57*W；
     3) 反演震中严格限制在断层投影范围内（越界自动回退到网格最优）。
 
 有效范围：长轴距/短轴距 ≤ max_dist（默认 200 km）的台站参与反演。
@@ -191,7 +191,7 @@ def invert_epicenter_cea2019(
         max_dist  有效范围（长轴距/短轴距 ≤ 该值，km，默认 200）
         extent    衰减场最大距离 km
         shypo / dhypo  相对断层上缘的沿走向/沿倾向位置（km），默认 None
-                  → 0 / 0.56*W，可自定义（如 -10 / 15）
+                  → 0 / 0.57*W，可自定义（如 -10 / 15）
         local_refine  最优网格点附近连续精化半宽（°；0 = 仅用网格点）
         outpath / plot_path  统计 txt / 4×N 图输出路径（None = 不导出）
         true_epi  已知震中（仅验证）

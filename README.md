@@ -25,6 +25,9 @@ CEA2019 图中如选择 `Intensity`，它是由预测 PGA/PGV 按 GB/T 17742-202
 | `CEA2019_class.py` | CEA2019 Excel 系数读取、PGA/PGV/PSA 正反算 |
 | `GB17742_class.py` | PGA/PGV 到仪器烈度的换算 |
 | `ellipse_fields.py` | 两模型共用的解析椭圆前向计算内核 |
+| `Leonard2014_fitted_by_SMD_crust.py` | SMD 地壳事件修正的 L2014 断层长宽定标率 |
+| `mesh_single_rectangular_finite_fault.py` | 根据震源位置、走向、倾角和 L/W 生成矩形断层网格 |
+| `fault_distance_azimuth_single_multi.py` | 单/多断层 Rrup、Rjb、Rx 和方位角计算 |
 | `GB18306_Pre.py` | GB18306 初始震中预测、绘图和表格 |
 | `CEA2019_pre.py` | CEA2019 初始震中预测、绘图和表格 |
 | `GB18306_vs_Obs.py` | GB18306 指定宏观震中的预测—观测残差分析 |
@@ -103,12 +106,9 @@ result = invert_epicenter_cea2019(
 print(result["epicenter"], result["reduced_chi2"])
 ```
 
-若不提供外部 `fault_lon_mat/fault_lat_mat`，反演会调用 L14 定标率和矩形有限断层
-网格。断层工具默认位于本项目同级 `Rrup_Rjb_Rx_Azimuth_Cal`，也可设置环境变量：
-
-```powershell
-$env:GB18306_FAULT_TOOL_DIR = 'D:\path\to\Rrup_Rjb_Rx_Azimuth_Cal'
-```
+若不提供外部 `fault_lon_mat/fault_lat_mat`，反演会直接调用同目录内的 L14 修正
+定标率和矩形有限断层网格模块。默认 `shypo=0`、`dhypo=0.57W`；若断层顶部
+高于地表，当前网格模块会整体下移断层并同步调整返回的震源深度。
 
 ## 环境与测试
 

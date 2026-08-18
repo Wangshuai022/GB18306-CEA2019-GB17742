@@ -16,7 +16,7 @@ GB18306 震中反演 —— 基于 GB18306-2015 椭圆衰减，断层网格约�
        破裂长度 L、宽度 W；
     3) 由震中经纬度 + 深度 + strike/dip/L/W，调用
        mesh_single_rectangular_finite_fault.build_fault_grid 生成断层面网格点，
-       默认 shypo = 0（沿走向相对位置），dhypo = 0.56 * W（沿倾向相对位置）；
+       默认 shypo = 0（沿走向相对位置），dhypo = 0.57 * W（沿倾向相对位置）；
     4) 候选震中 = 断层面网格节点的经纬度；
     5) 候选点上批量计算 chi2，取最小者为最优震中，再做局部连续精化；
        反演震中严格限制在断层投影范围内（越界自动回退到网格最优）。
@@ -27,8 +27,7 @@ GB18306 震中反演 —— 基于 GB18306-2015 椭圆衰减，断层网格约�
 依赖（同目录或可导入）：
     GB18306_class.py（衰减模型）
     Leonard2014_fitted_by_SMD_crust.py、mesh_single_rectangular_finite_fault.py
-    （默认从本项目同级 Rrup_Rjb_Rx_Azimuth_Cal 导入；也可通过环境变量
-     GB18306_FAULT_TOOL_DIR 指定）
+    （均与本文件位于同一目录）
 
 使用案例：
     from GB18306_epicenter_inversion import invert_epicenter_gb18306
@@ -57,22 +56,14 @@ sys.path.insert(0, HERE)
 
 from ellipse_fields import GB18306EllipseField
 
-# 断层工具（L14 定标率 + 断层面网格）所在目录。可通过环境变量覆盖；
-# 默认寻找本项目同级目录，避免绑定某台机器的绝对路径。
-FAULT_TOOL_DIR = os.environ.get(
-    "GB18306_FAULT_TOOL_DIR",
-    os.path.abspath(os.path.join(HERE, os.pardir, "Rrup_Rjb_Rx_Azimuth_Cal")),
-)
-if os.path.isdir(FAULT_TOOL_DIR):
-    sys.path.insert(0, FAULT_TOOL_DIR)
 try:
     from Leonard2014_fitted_by_SMD_crust import l14_fitted
     from mesh_single_rectangular_finite_fault import build_fault_grid
 except ImportError as e:
     raise ImportError(
         "缺少断层工具：Leonard2014_fitted_by_SMD_crust.py 与 "
-        "mesh_single_rectangular_finite_fault.py（应位于 "
-        f"{FAULT_TOOL_DIR}）。原始错误：{e}"
+        "mesh_single_rectangular_finite_fault.py 必须与反演程序位于同一目录。"
+        f"原始错误：{e}"
     )
 
 SIGMA_GMM = {"pga": 0.236, "pgv": 0.271}
@@ -136,7 +127,7 @@ def fault_mesh_points(
         1) rake → 机制（SS/RS/NS）；
         2) L14（SMD 修正版）预测中位破裂长度 L、宽度 W；
         3) build_fault_grid 生成断层面网格：shypo/dhypo 为相对断层上缘的
-           沿走向/沿倾向位置（km），默认 None → shypo=0、dhypo=0.56*W，
+           沿走向/沿倾向位置（km），默认 None → shypo=0、dhypo=0.57*W，
            也可自定义（如 shypo=-10、dhypo=15）；
         4) 返回网格经纬度/深度矩阵及尺寸信息。
     """
@@ -160,8 +151,8 @@ def fault_mesh_points(
     if shypo is None:
         shypo = 0.0
     if dhypo is None:
-        dhypo = 0.56 * W
-        tag = "（默认：0 / 0.56*W）"
+        dhypo = 0.57 * W
+        tag = "（默认：0 / 0.57*W）"
     else:
         tag = "（自定义）"
     if verbose:
@@ -307,7 +298,7 @@ def invert_epicenter_gb18306(
         extent   衰减场最大距离 km
         dx, dy   断层面网格期望尺寸 km（默认 0.5）
         shypo    沿走向相对断层上缘的位置（km，默认 None → 0）
-        dhypo    沿倾向相对断层上缘的位置（km，默认 None → 0.56*W）；
+        dhypo    沿倾向相对断层上缘的位置（km，默认 None → 0.57*W）；
                  可自定义，如 shypo=-10、dhypo=15
         local_refine 最优网格点附近的连续精化半宽（°；0 = 仅用网格点）
         outpath  统计 txt 输出路径（None = 不导出）
