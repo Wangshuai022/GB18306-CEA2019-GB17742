@@ -382,13 +382,16 @@ def plot_cea2019_vs_obs(
     fault_lat_mat=None,
     plot_observations=None,
     table_outpath=None,
+    site_correction_kwargs=None,
 ):
     """绘制 CEA2019 的 4×N 预测—观测综合图。
 
     Parameters
     ----------
     data : str, os.PathLike or pandas.DataFrame
-        台站观测。DataFrame attrs 可携带 Vs30 绘图状态，标题会明确标注。
+        制表符台站观测文件或DataFrame。配合 ``plot_observations`` 时，文件和
+        原始DataFrame都会自动调用CB14修正；已修正DataFrame会直接复用，
+        图标题明确说明当前观测状态。
     macro_epicenter : tuple(float, float)
         用于前向预测的宏观震中经纬度。
     Ms : float
@@ -416,12 +419,17 @@ def plot_cea2019_vs_obs(
     fault_lon_mat, fault_lat_mat : array-like or None
         二维断层网格经纬度，必须同时提供或同时省略。
     plot_observations : {None, "corrected", "raw"}, default None
-        场地修正观测的绘图模式。None 表示原样使用 ``data``；``corrected``
-        使用参考 Vs30 观测；``raw`` 从 ``*_raw`` 审计列恢复原始场地观测。
-        仅改变图中的观测点和绘图残差，不改变任何震中反演结果。
+        场地修正观测的绘图模式。None表示原样使用 ``data``；``corrected``
+        自动统一到参考Vs30；``raw`` 使用原始场地观测。文件路径、原始
+        DataFrame和已修正DataFrame均支持。仅改变图中观测、配套TXT和绘图
+        残差，不改变任何震中反演结果。
     table_outpath : str, os.PathLike or None, default None
         配套逐台站TXT路径。None 时自动使用与 ``outpath`` 相同的目录和文件名，
         仅把后缀替换为 ``.txt``。TXT采用UTF-8 BOM和制表符分隔。
+    site_correction_kwargs : dict or None, default None
+        当 ``plot_observations`` 为 ``corrected/raw`` 且 ``data`` 是文件路径或
+        原始DataFrame时，传给CB14场地修正的可选参数。省略时使用中国Vs30
+        默认路径、参考Vs30=500 m/s、区域CH、关闭盆地项。
 
     Returns
     -------
@@ -442,14 +450,17 @@ def plot_cea2019_vs_obs(
             "fault_lon_mat 与 fault_lat_mat 必须同时提供或同时省略"
         )
     if plot_observations is not None:
-        if not isinstance(data, pd.DataFrame):
-            raise TypeError(
-                "plot_observations 只能用于包含场地修正审计列的 pandas.DataFrame；"
-                "文件路径输入请先调用 correct_observations_to_reference_vs30"
-            )
-        from Vs30_site_correction import prepare_site_plot_observations
+        from Vs30_site_correction import prepare_observations_for_site_plot
 
-        data = prepare_site_plot_observations(data, plot_observations)
+        site_periods = [
+            p for p in normalize_params(params) if p != "Intensity"
+        ]
+        data = prepare_observations_for_site_plot(
+            data,
+            periods=site_periods,
+            plot_observations=plot_observations,
+            correction_kwargs=site_correction_kwargs,
+        )
     C = _compute_vs_obs(
         data, macro_epicenter, Ms, region, strike, params, extent, param_cols
     )
@@ -786,9 +797,7 @@ def plot_cea2019_vs_obs(
     if isinstance(data, pd.DataFrame):
         site_plot_mode = data.attrs.get("site_plot_observations")
         if site_plot_mode == "raw":
-            title_parts.append(
-                "原始场地观测（仅绘图，反演仍使用 Vs30 修正值）"
-            )
+            title_parts.append("原始场地观测（未换算至参考Vs30）")
         elif "site_reference_vs30" in data.attrs:
             site_model = data.attrs.get("site_correction_model", "场地模型")
             site_vs30 = float(data.attrs["site_reference_vs30"])
@@ -915,7 +924,8 @@ if __name__ == "__main__":
         params=(-1, -2, 0.3, 1.0, 3, 6),
         extent=500.0,
         max_dist=400.0,
-        outpath="./Test_output/CEA2019_vs_Obs0.png",
+        outpath="./Test_output/CEA2019_vs_Obs1.png",
         grid_n=100,
-        axis="短轴",
+        plot_observations="corrected",
+        axis="长轴",
     )
