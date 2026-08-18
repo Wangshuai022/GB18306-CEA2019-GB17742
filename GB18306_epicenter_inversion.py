@@ -203,9 +203,21 @@ def load_station_data(data, mode="pga_pgv"):
         raise TypeError("data 必须是文件路径或 pandas.DataFrame")
     df.columns = [str(c).strip() for c in df.columns]
     df = df.rename(columns={"longi": "lon", "lati": "lat"})
-    # GB18306 的 PGA/PGV 实为 EPA/EPV：优先 EPA_H/EPV_H，再回退 PGA_H/PGV_H 或 PGA/PGV
-    pga_col = next((c for c in ("EPA_H", "PGA_H", "PGA") if c in df.columns), None)
-    pgv_col = next((c for c in ("EPV_H", "PGV_H", "PGV") if c in df.columns), None)
+    # 观测优先级：RotD50 → H → 有效值 RotD50 → 有效值 H。
+    pga_candidates = (
+        "PGA_RotD50",
+        "PGA_H",
+        "EPA_RotD50",
+        "EPA_H",
+    )
+    pgv_candidates = (
+        "PGV_RotD50",
+        "PGV_H",
+        "EPV_RotD50",
+        "EPV_H",
+    )
+    pga_col = next((c for c in pga_candidates if c in df.columns), None)
+    pgv_col = next((c for c in pgv_candidates if c in df.columns), None)
     required = {
         "intensity": [("I", "I")],
         "pga": [("pga", pga_col)],
@@ -280,7 +292,7 @@ def invert_epicenter_gb18306(
 
     明确输入：
         data     实测数据：文件路径或 DataFrame
-                 （PGA/PGV 实为 EPA/EPV，优先用 EPA_H/EPV_H，再回退 PGA_H/PGV_H）
+                 （优先 RotD50，其次 H，再回退有效值 RotD50 和有效值 H）
         Ms       面波震级（GB18306 衰减用）
         region   分区："青藏区"/"新疆区"/"东部区"/"中部区"
         hypo     震中 (经度, 纬度, 深度 km) —— 断层网格的破裂起始点
