@@ -133,18 +133,29 @@ def _paper_scaling(Mw, family, eq_type):
 
 
 def l14_fitted(Mw, fault_type, eq_type):
-    """
-    修正版 L2014。
+    """由 Mw 和断层类型计算修正 Leonard (2014) 中值尺寸。
 
-    参数
-    ----
+    Parameters
+    ----------
     Mw : float
-    fault_type : str   'SSF'/'SS'/'走滑' 或 'RF'/'RS'/'逆' 或 'NF'/'NS'/'正'
-    eq_type : str      '板间'/'板周' 使用修正截距；'板内' 沿用论文 SCR 系数
+        矩震级。
+    fault_type : str
+        走滑 ``SSF/SS/走滑``、逆冲 ``RF/RS/RV/逆/逆冲`` 或正断层
+        ``NF/NS/正/正断``。
+    eq_type : str
+        ``板间/板周`` 使用 SMD 地壳事件拟合截距；``板内`` 使用 Leonard
+        (2014) 稳定大陆区原始系数。
 
-    返回
-    ----
-    dict: A(km2), L(km), W(km), D(m), note
+    Returns
+    -------
+    dict
+        ``A`` 破裂面积（km²）、``L`` 长度（km）、``W`` 宽度（km）、
+        ``D`` 平均位错（m）和系数来源 ``note``。
+
+    Notes
+    -----
+    走滑宽度按当前项目约定限制为 ``SS_W_CAP``；返回值是中值，不包含随机
+    扰动。需要 ±1σ 范围时调用 ``l14_fitted_range``。
     """
     if str(eq_type) in ("板内",):
         fam = _family(fault_type)
@@ -172,10 +183,22 @@ def l14_fitted(Mw, fault_type, eq_type):
 
 def l14_fitted_range(Mw, fault_type, eq_type, dims=("L", "W"),
                      mechanism=None):
-    """
-    修正版预测值 + ±1σ 范围（ln 残差）。
+    """返回修正 Leonard (2014) 尺寸中值及对数 ±1σ 范围。
 
-    返回 {dim: (median, lo, hi, sigma_ln)}；mechanism 缺省时由 fault_type 推断。
+    Parameters
+    ----------
+    Mw, fault_type, eq_type
+        与 ``l14_fitted`` 相同。
+    dims : sequence of str, default ("L", "W")
+        需要输出的尺寸键，可从 ``A/L/W/D`` 中选择有统计量的项目。
+    mechanism : {"SS", "RS", "NS"} or None
+        残差标准差类别；None 时由 ``fault_type`` 推断。
+
+    Returns
+    -------
+    dict
+        ``{dim: (median, lower, upper, sigma_ln)}``，其中上下界为
+        ``median * exp(±sigma_ln)``。
     """
     r = l14_fitted(Mw, fault_type, eq_type)
     mech = mechanism or {"SSF": "SS", "SS": "SS", "走滑": "SS",
