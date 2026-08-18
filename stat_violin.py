@@ -50,7 +50,12 @@ from scipy.stats import gaussian_kde
 
 
 def apply_style():
-    """套用本项目统计图统一样式（Times New Roman + Microsoft YaHei 回退）"""
+    """套用本项目统计图统一样式。
+
+    本函数修改 Matplotlib 的全局 ``rcParams``，设置 Times New Roman 西文字体、
+    Microsoft YaHei 中文回退、ASCII 负号及 300 dpi 输出。无输入参数和返回值；
+    若调用方还需要自己的样式，应在调用本函数之后覆盖相应 ``rcParams``。
+    """
     plt.rcParams.update(
         {
             "font.family": ["Times New Roman", "Microsoft YaHei"],  # 显式列表才能触发中文回退
@@ -85,12 +90,37 @@ def half_violin_box_scatter(
     alpha_scatter=0.7,
     s=20,
 ):
-    """
-    在已有子图 ax 的横轴位置 x 处画一组残差的统计图：
-        左 = KDE 半小提琴；中 = 箱线（四分位+中位数+须）；右 = 抖动散点。
-    data : 一维数组（残差），内部会自动滤掉 NaN。
-    x    : 该组在横轴上的位置（如 0、1、2 代表三列）。
-    color: 组颜色。
+    """在已有坐标轴上绘制单组“半小提琴 + 箱线 + 散点”。
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        接收图元的目标坐标轴。
+    data : array-like
+        一维统计样本；NaN 和无穷值会被过滤，过滤后为空则不绘制。
+    x : float
+        该组的横轴中心位置。
+    color : matplotlib color
+        小提琴、箱体和散点的颜色。
+    left_offset, right_offset : float
+        小提琴中心向左、散点中心向右相对 ``x`` 的偏移量。
+    violin_scale, box_width, jitter_scale : float
+        半小提琴宽度、箱体宽度和散点横向抖动标准差。
+    annotate : bool
+        是否标注样本量 N、均值和中位数。
+    annotate_y : float or None
+        注释框的 y 坐标；None 时根据样本最大值自动确定。
+    value_fmt : str
+        均值和中位数的 Python 格式串，例如 ``"{:.2f}"``。
+    alpha_scatter : float
+        散点透明度。
+    s : float
+        散点面积，单位为 points²。
+
+    Returns
+    -------
+    None
+        图元直接添加到 ``ax``。散点抖动固定使用随机种子 42，保证重复出图一致。
     """
     data = np.asarray(data, dtype=float)
     data = data[np.isfinite(data)]
@@ -161,12 +191,24 @@ def half_violin_box_scatter(
 
 
 def fit_annotations_inside(ax, fig=None, draw=True, margin_px=3.0):
-    """
-    自适应调整：把 ax 内所有文本框（如 N/μ/m 注释框）收进坐标区。
-    文本框若超出坐标区顶部/底部，自动放大 y 范围（数据范围不变）。
+    """扩大 y 轴范围，使坐标轴内的统计注释框不被裁切。
 
-    draw=True 时先画一帧（第一次调用传 True）；
-    大图里多个子图可先 fig.canvas.draw() 一次，再逐个传 draw=False。
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        需要检查文本边界的坐标轴。
+    fig : matplotlib.figure.Figure or None
+        所属图；None 时使用 ``ax.figure``。
+    draw : bool
+        True 时先渲染一次以取得文本像素边界。多子图可统一 ``canvas.draw`` 后
+        传 False，避免重复渲染。
+    margin_px : float
+        注释框与坐标区上下边界之间保留的最小像素距离。
+
+    Returns
+    -------
+    matplotlib.axes.Axes
+        调整后的原坐标轴对象。渲染器不可用时保持原范围并安全返回。
     """
     fig = fig if fig is not None else ax.figure
     try:
@@ -203,9 +245,35 @@ def stat_violin_figure(
     value_fmt="{:.2f}",
     **kwargs,
 ):
-    """
-    独立成图：多组残差的 半小提琴+箱线+散点 对比图。
-    groups: 每组一个一维数组；labels/colors: 组名/颜色（长度一致）。
+    """生成并保存多组统计量的标准半小提琴对比图。
+
+    Parameters
+    ----------
+    groups : sequence of array-like
+        每组一个一维样本数组。
+    labels, colors : sequence
+        各组标签和颜色；应与 ``groups`` 长度一致。
+    out_path : str or os.PathLike
+        输出 PNG 路径。
+    xlabel, ylabel, title : str
+        坐标轴标签和子图标题。
+    suptitle : str or None
+        可选总标题。
+    figsize : tuple(float, float)
+        Matplotlib 图尺寸，单位 inch。
+    ylim : tuple(float, float) or None
+        y 轴范围；None 时由所有有限样本自动计算并给注释留白。
+    annotate : bool
+        是否为各组显示 N、均值和中位数。
+    value_fmt : str
+        注释数值格式。
+    **kwargs
+        继续传给 :func:`half_violin_box_scatter` 的几何和散点参数。
+
+    Returns
+    -------
+    str or os.PathLike
+        原样返回 ``out_path``。函数保存后会关闭 Figure，适合批量绘图。
     """
     apply_style()
     fig, ax = plt.subplots(figsize=figsize)
