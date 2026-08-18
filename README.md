@@ -6,26 +6,29 @@
 
 当前发布版本：**v1.0**（2026-08-18）。
 
-## V1.0 本次修改清单
+## V1.0 本轮实际修改清单
+
+下面用 `[功能]` 和 `[文档]` 区分运行逻辑修改与说明补充。没有改动算法的文件
+不会再描述成“新增功能”。
 
 | 程序 | V1.0 修改内容 |
 |---|---|
-| `GB18306_vs_Obs.py` | 观测列改为 RotD50 优先；统一预测、椭圆距和残差计算；支持在图题中标明 Vs30=500 m/s 或原始场地观测；补充关键函数输入输出说明。 |
-| `CEA2019_vs_Obs.py` | PGA、PGV、PSA 均改为 RotD50 优先；统一多周期预测—观测残差；增加场地观测绘图状态标识；补充接口说明。 |
-| `GB18306_epicenter_inversion.py` | 使用模型 sigma 加权 chi2/reduced chi2 反演，完善有效台站、边界状态和返回结果说明，并使用本地断层网格工具。 |
-| `CEA2019_epicenter_inversion.py` | 支持 PGA、PGV、PSA 多参数联合 chi2 反演，记录各参数观测来源、有效样本和优化状态，并使用本地断层网格工具。 |
+| `GB18306_vs_Obs.py` | `[功能]` PGA/PGV 改为 RotD50 四级优先；公共绘图函数新增 `plot_observations`，可对场地修正 DataFrame 显式选择 `corrected/raw`，并在标题标明状态。`[文档]` 补充输入、输出、单位和残差定义。 |
+| `CEA2019_vs_Obs.py` | `[功能]` PGA、PGV、PSA 改为 RotD50 优先；公共绘图函数新增 `plot_observations` 并显示场地观测状态。`[文档]` 补充多参数接口说明。 |
+| `GB18306_epicenter_inversion.py` | `[功能]` 反演观测列改为 RotD50 四级优先。sigma 加权 chi2、断层约束和返回结构是原有实现，本轮只补充其说明。 |
+| `CEA2019_epicenter_inversion.py` | `[功能]` 通过 `CEA2019_vs_Obs.load_obs_data` 继承新的 RotD50 优先级。多参数 chi2 反演算法未改，本轮补充返回结果和有效样本说明。 |
 | `Vs30_site_correction.py` | 新增中国 Vs30 大文件分块查询、CB14 非线性 A1100 反解、PGA/PGV/PSA 到参考 Vs30 的统一换算和逐台站审计表。 |
 | `GB18306_epicenter_inversion_Vs30.py` | 新增 GB18306 场地修正版反演；反演固定使用 Vs30=500 m/s 观测，绘图可在 `corrected/raw` 间切换。 |
 | `CEA2019_epicenter_inversion_Vs30.py` | 新增 CEA2019 多参数场地修正版反演；所有周期共用同一台站 A1100，绘图开关不改变震中和 chi2。 |
 | `CB14_site_correct.py`、`pynga/` | 纳入成熟 CB14 场地项及其内部实现依赖，使仓库克隆后可直接执行场地修正；应用程序不直接调用 `pynga`。 |
-| `ellipse_fields.py` | GB18306、CEA2019 的 Pre、vs_Obs 和反演共用同一解析椭圆场，减少不同应用间的重复计算和插值差异。 |
-| `GB17742_class.py` | 完善 PGA/PGV 到仪器烈度换算接口、输入单位、返回值及调用说明。 |
-| `Leonard2014_fitted_by_SMD_crust.py` | 明确 SMD 地壳事件修正定标率的输入类型、L/W/A 输出和不确定性返回格式。 |
-| `mesh_single_rectangular_finite_fault.py` | 默认震源倾向位置改为 `dhypo=0.57W`；保留断层出露后整体下移策略；补充网格节点、子断层和返回字典说明。 |
-| `fault_distance_azimuth_single_multi.py` | 并入单/多断层 Rrup、Rjb、Rx 和方位角计算，补充坐标单位、符号约定及主要入口返回结构。 |
-| `stat_violin.py` | 完善残差半小提琴、箱线、散点和注释自适应函数说明，固定抖动随机种子以保证图件可复现。 |
-| `GB18306_Intensity_Compare.py` | 补充 GB18306 直接烈度与 GB/T 17742 仪器烈度对比程序的运行和输出说明。 |
-| `tests/test_models.py`、`tests/test_vs30_inversion.py` | 增加 RotD50 四级回退、模型正反算、断层网格、CB14/A1100、Vs30 换算及 corrected/raw 绘图开关回归测试。 |
+| `ellipse_fields.py` | `[文档]` 补充既有共享椭圆场的构造参数、数组形状、单位和返回顺序；本轮没有改模型算法。 |
+| `GB17742_class.py` | `[文档]` 补充既有仪器烈度换算接口的输入单位、返回值和异常说明；换算公式未改。 |
+| `Leonard2014_fitted_by_SMD_crust.py` | `[文档]` 明确既有定标率函数的类型、L/W/A/D 单位及不确定性返回格式；系数未改。 |
+| `mesh_single_rectangular_finite_fault.py` | `[文档]` 说明既有 `dhypo=0.57W` 默认值和地表出露整体下移策略；本轮没有改变网格算法。 |
+| `fault_distance_azimuth_single_multi.py` | `[文档]` 补充既有 Rrup/Rjb/Rx/方位角入口的坐标单位、符号约定和返回结构；距离算法未改。 |
+| `stat_violin.py` | `[文档]` 补充既有半小提琴、箱线、散点和注释自适应接口；绘图算法未改。 |
+| `GB18306_Intensity_Compare.py` | `[文档]` 补充既有烈度对比程序的运行方式和输出文件说明；计算未改。 |
+| `tests/test_models.py`、`tests/test_vs30_inversion.py`、`tests/test_release_contracts.py` | 增加 RotD50 四级回退、模型正反算、断层网格、CB14/A1100、Vs30 换算、公共函数签名及 corrected/raw 调用链回归测试。 |
 
 本表只列本次有实质修改或新增的程序。原有 `GB18306_class.py`、
 `CEA2019_class.py`、`GB18306_Pre.py` 和 `CEA2019_pre.py` 保持模型实现不变，
