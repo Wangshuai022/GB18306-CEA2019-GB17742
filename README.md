@@ -28,12 +28,12 @@ CEA2019 图中如选择 `Intensity`，它是由预测 PGA/PGV 按 GB/T 17742-202
 | `Leonard2014_fitted_by_SMD_crust.py` | SMD 地壳事件修正的 L2014 断层长宽定标率 |
 | `mesh_single_rectangular_finite_fault.py` | 根据震源位置、走向、倾角和 L/W 生成矩形断层网格 |
 | `fault_distance_azimuth_single_multi.py` | 单/多断层 Rrup、Rjb、Rx 和方位角计算 |
-| `GB18306_Pre.py` | GB18306 初始震中预测、绘图和表格 |
-| `CEA2019_pre.py` | CEA2019 初始震中预测、绘图和表格 |
+| `GB18306_Pre.py` | GB18306 基于初始破裂点预测、绘图和表格 |
+| `CEA2019_pre.py` | CEA2019 基于初始破裂点预测、绘图和表格 |
 | `GB18306_vs_Obs.py` | GB18306 指定宏观震中的预测—观测残差分析 |
 | `CEA2019_vs_Obs.py` | CEA2019 指定宏观震中的预测—观测残差分析 |
-| `GB18306_epicenter_inversion.py` | GB18306 最优宏观震中反演 |
-| `CEA2019_epicenter_inversion.py` | CEA2019 多参数联合宏观震中反演 |
+| `GB18306_epicenter_inversion.py` | GB18306 最优宏观震中反演，以及指定宏观震中的预测—观测残差分析 |
+| `CEA2019_epicenter_inversion.py` | CEA2019 多参数联合宏观震中反演，以及指定宏观震中的预测—观测残差分析 |
 
 Pre、vs_Obs 和 epicenter_inversion 均通过 `ellipse_fields.py` 使用同一解析场，
 避免不同应用之间出现近场采样或插值差异。
