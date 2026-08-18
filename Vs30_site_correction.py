@@ -615,6 +615,98 @@ def attach_site_audit_to_result(
     return result
 
 
+def prepare_observations_for_site_plot(
+    data,
+    periods: Iterable[float],
+    plot_observations: str = "corrected",
+    *,
+    correction_kwargs: dict | None = None,
+) -> pd.DataFrame:
+    """为 ``vs_Obs`` 绘图统一准备 corrected/raw 台站观测。
+
+    本函数是文件路径和 DataFrame 的统一入口：原始输入会先调用项目内的
+    ``CB14_site_correct.py`` 修正到目标参考场地；已经由
+    :func:`correct_observations_to_reference_vs30` 修正过的 DataFrame 会直接
+    复用，避免二次场地修正。最后再根据 ``plot_observations`` 返回修正值或
+    恢复后的原始值。
+
+    Parameters
+    ----------
+    data : str, os.PathLike or pandas.DataFrame
+        制表符观测文件、原始观测 DataFrame，或已包含场地修正审计列的
+        DataFrame。原始输入必须包含有效PGA及经纬度；若没有 ``Vs30(m/s)``，
+        使用默认中国Vs30网格查询。
+    periods : iterable of float
+        需要参与场地修正的参数：-1=PGA、-2=PGV、正数=PSA周期（s）。
+        不应传入烈度字符串。
+    plot_observations : {"corrected", "raw"}, default "corrected"
+        ``corrected`` 返回参考Vs30观测；``raw`` 返回原始场地观测。
+    correction_kwargs : dict or None
+        可选地传给 :func:`correct_observations_to_reference_vs30`，例如
+        ``vs30_path``、``reference_vs30``、``region_name``、``use_basin``、
+        ``chunksize`` 和 ``verbose``。
+
+    Returns
+    -------
+    pandas.DataFrame
+        可直接传给GB18306/CEA2019预测—观测计算的绘图数据。attrs记录
+        ``site_plot_observations``；corrected模式还保留参考Vs30与CB14信息。
+
+    Raises
+    ------
+    ValueError
+        模式非法、没有可修正参数，或输入是部分修正DataFrame且缺少本次请求
+        周期。部分修正表不会被再次修正，以避免PGA/PGV重复除以场地倍率。
+    """
+    mode = str(plot_observations).strip().lower()
+    if mode not in {"corrected", "raw"}:
+        raise ValueError(
+            "plot_observations 必须为 'corrected' 或 'raw'，"
+            f"收到：{plot_observations!r}"
+        )
+
+    normalized_periods = []
+    for period in periods:
+        value = -1.0 if float(period) == 0.0 else float(period)
+        if value not in normalized_periods:
+            normalized_periods.append(value)
+    if not normalized_periods:
+        raise ValueError("corrected/raw 场地绘图至少需要一个PGA、PGV或PSA参数")
+
+    kwargs = dict(correction_kwargs or {})
+    corrected_data = None
+    if isinstance(data, pd.DataFrame) and "site_reference_vs30" in data.attrs:
+        requested_reference = float(
+            kwargs.get("reference_vs30", data.attrs["site_reference_vs30"])
+        )
+        existing_reference = float(data.attrs["site_reference_vs30"])
+        if not np.isclose(requested_reference, existing_reference):
+            raise ValueError(
+                "输入DataFrame已经修正到 "
+                f"Vs30={existing_reference:g} m/s，不能直接改为 "
+                f"Vs30={requested_reference:g} m/s；请改用原始观测"
+            )
+        missing_periods = []
+        for period in normalized_periods:
+            columns = _columns_for_period(data, period)
+            if not columns or any(f"{col}_raw" not in data.columns for col in columns):
+                missing_periods.append(period)
+        if missing_periods:
+            raise ValueError(
+                "输入DataFrame只完成了部分场地修正，缺少周期 "
+                f"{missing_periods} 的 *_raw 审计列；请改用原始观测，避免重复修正"
+            )
+        corrected_data = data
+
+    if corrected_data is None:
+        corrected_data, _ = correct_observations_to_reference_vs30(
+            data,
+            normalized_periods,
+            **kwargs,
+        )
+    return prepare_site_plot_observations(corrected_data, mode)
+
+
 def prepare_site_plot_observations(
     corrected_data: pd.DataFrame,
     plot_observations: str = "corrected",
