@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 GB18306-2015 烈度圈 + PGA/PGV 衰减场 应用整合包（v2）
 ======================================================
@@ -59,14 +58,13 @@ import math
 import os
 import sys
 
+import matplotlib
 import numpy as np
 import pandas as pd
 
-import matplotlib
-
 matplotlib.use("Agg")  # 不弹窗口，只保存图片
 import matplotlib.pyplot as plt
-from matplotlib.colors import ListedColormap, BoundaryNorm
+from matplotlib.colors import BoundaryNorm, ListedColormap
 from matplotlib.ticker import FuncFormatter
 
 # scipy 用于 griddata 插值；没装时云图无法生成（会给出警告）
@@ -74,34 +72,29 @@ try:
     from scipy.interpolate import griddata
 
     HAVE_GRIDDATA = True
-except Exception:
+except ImportError:
     HAVE_GRIDDATA = False
-
-# 让中文提示在 Windows 命令行里正常显示
-try:
-    sys.stdout.reconfigure(encoding="utf-8")
-except Exception:
-    pass
 
 # 精确的经纬度换算工具（UTM 投影）；没装时自动退化为简单近似
 try:
     from pyproj import Transformer
 
     HAVE_PYPROJ = True
-except Exception:
+except ImportError:
     HAVE_PYPROJ = False
 
 # 找到 GB18306_class.py（和本文件在同一个文件夹里），导入两个衰减 class
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 if THIS_DIR not in sys.path:
     sys.path.insert(0, THIS_DIR)
+from ellipse_fields import GB18306EllipseField
+
+# GB/T 17742-2020 仪器烈度换算（PGA/PGV → 烈度）
+from GB17742_class import GB17742_2020_Cal_instrument_intensity
 from GB18306_class import (
     GB18306_2015_IntensityCal,
     GB18306_2015_PGA_PGV_GMMs,
 )
-
-# GB/T 17742-2020 仪器烈度换算（PGA/PGV → 烈度）
-from GB17742_class import GB17742_2020_Cal_instrument_intensity
 
 # 全局唯一的两个计算器（烈度 + PGA/PGV）
 CALC_INTENSITY = GB18306_2015_IntensityCal()
@@ -168,11 +161,7 @@ def km_to_lonlat(lon, lat, east_km, north_km, utm_zone):
     """把相对震中的 东向(km)/北向(km) 换算成经纬度（UTM 投影）。
     带号只由经度决定；EPSG 前缀按纬度选择：北半球 326xx，南半球 327xx。"""
     if HAVE_PYPROJ:
-        epsg = (
-            f"epsg:326{utm_zone:02d}"
-            if lat >= 0
-            else f"epsg:327{utm_zone:02d}"
-        )
+        epsg = f"epsg:326{utm_zone:02d}" if lat >= 0 else f"epsg:327{utm_zone:02d}"
         fwd = Transformer.from_crs("epsg:4326", epsg, always_xy=True)
         epi_x, epi_y = fwd.transform(lon, lat)
         inv = Transformer.from_crs(epsg, "epsg:4326", always_xy=True)
@@ -379,9 +368,7 @@ def plot_intensity_ellipses(
 
     for intensity, major, minor in ellipse_data:
         # 第 2~3 步：椭圆公式 + 走向旋转 + 经纬度换算（共用函数）
-        ell_lon, ell_lat = _ellipse_lonlat(
-            lon, lat, utm_zone, strike, major, minor
-        )
+        ell_lon, ell_lat = _ellipse_lonlat(lon, lat, utm_zone, strike, major, minor)
         color = intensity_color(intensity)
         # 填充当前椭圆（从小到大逐层向内盖，外圈色带自然露出）
         ax.fill(
@@ -391,13 +378,12 @@ def plot_intensity_ellipses(
             alpha=0.95,
             linewidth=0,
             zorder=2,
-            label=f"Intensity {to_roman(intensity)} "
-            f"({major:.0f}x{minor:.0f} km)",
+            label=f"Intensity {to_roman(intensity)} " f"({major:.0f}x{minor:.0f} km)",
         )
         # 椭圆边界线（黑色虚线）
         ax.plot(ell_lon, ell_lat, color="k", linewidth=1, linestyle="--")
         # 在椭圆线上标注罗马数字（放在 135° 方向，避开走向箭头）
-        label_idx = int(round(135.0 / 360.0 * 360))
+        label_idx = round(135.0 / 360.0 * 360)
         ax.text(
             ell_lon[label_idx],
             ell_lat[label_idx],
@@ -407,9 +393,13 @@ def plot_intensity_ellipses(
             color="black",
             ha="center",
             va="center",
-            bbox=dict(
-                boxstyle="round,pad=0.15", fc="white", ec="k", lw=0.7, alpha=1
-            ),
+            bbox={
+                "boxstyle": "round,pad=0.15",
+                "fc": "white",
+                "ec": "k",
+                "lw": 0.7,
+                "alpha": 1,
+            },
             zorder=11,
         )
 
@@ -433,11 +423,9 @@ def plot_intensity_ellipses(
         "",
         xy=(arr_lon, arr_lat),
         xytext=(lon, lat),
-        arrowprops=dict(arrowstyle="->", color="black", lw=1.6),
+        arrowprops={"arrowstyle": "->", "color": "black", "lw": 1.6},
     )
-    ax.text(
-        arr_lon, arr_lat, f"Strike {strike:g} deg", fontsize=9, color="black"
-    )
+    ax.text(arr_lon, arr_lat, f"Strike {strike:g} deg", fontsize=9, color="black")
 
     # 图的范围按最大的圈（最小的烈度）自动调整，留 15% 边距
     dlat = max_major * 1.15 / 111.32
@@ -532,9 +520,7 @@ def export_intensity_table(
             "Repi_long(km)": np.round(a_eq, 2),  # 台站所在烈度圈长轴距
             "Repi_short(km)": np.round(b_eq, 2),  # 台站所在烈度圈短轴距
             "Intensity": np.round(I, 2),
-            "Intensity_roman": [
-                to_roman(v) if not math.isnan(v) else "NaN" for v in I
-            ],
+            "Intensity_roman": [to_roman(v) if not math.isnan(v) else "NaN" for v in I],
         }
     )
 
@@ -590,12 +576,12 @@ def _gmm_ellipse_radii(Y, Ms, region, param_type):
     p_l = CALC_GMM._get_params(Ms, region, "长轴", param_type)
     p_s = CALC_GMM._get_params(Ms, region, "短轴", param_type)
     lg = np.log10(Y)
-    a = 10.0 ** ((lg - p_l["A"] - p_l["B"] * Ms) / p_l["C"]) - p_l[
-        "D"
-    ] * np.exp(p_l["E"] * Ms)
-    b = 10.0 ** ((lg - p_s["A"] - p_s["B"] * Ms) / p_s["C"]) - p_s[
-        "D"
-    ] * np.exp(p_s["E"] * Ms)
+    a = 10.0 ** ((lg - p_l["A"] - p_l["B"] * Ms) / p_l["C"]) - p_l["D"] * np.exp(
+        p_l["E"] * Ms
+    )
+    b = 10.0 ** ((lg - p_s["A"] - p_s["B"] * Ms) / p_s["C"]) - p_s["D"] * np.exp(
+        p_s["E"] * Ms
+    )
     b = np.minimum(b, a)  # 退化保护：短轴不超过长轴
     a = np.maximum(a, 0.01)  # 与 invert_R 一致的最小截断
     b = np.maximum(b, 0.01)
@@ -708,9 +694,7 @@ def field_domain(long_arr, short_arr, r_scan):
         if i == 0:
             r_cross = float(r_scan[0])
         else:
-            r_cross = float(
-                np.interp(0.0, diff[i - 1 : i + 1], r_scan[i - 1 : i + 1])
-            )
+            r_cross = float(np.interp(0.0, diff[i - 1 : i + 1], r_scan[i - 1 : i + 1]))
     else:
         r_cross = float("inf")
 
@@ -744,7 +728,8 @@ def _solve_values(long_arr, short_arr, r_scan, R, theta):
     # 最外圈椭圆（field_domain 已含退化保护：交点后外圈为圆）
     a_max, b_max, _ = field_domain(long_arr, short_arr, r_scan)
     if not np.isfinite(b_max):
-        return np.full_like(R, np.nan)
+        nan = np.full_like(R, np.nan)
+        return nan.copy(), nan.copy(), nan.copy()
 
     # 台站在各方向上的最外圈半径，超出者无法预测（记 NaN）
     ct = np.cos(theta)
@@ -757,7 +742,8 @@ def _solve_values(long_arr, short_arr, r_scan, R, theta):
     b_t = minor_axis_curve(long_arr, short_arr, r_scan)
     valid = np.isfinite(b_t)
     if valid.sum() < 2:
-        return np.full_like(R, np.nan)
+        nan = np.full_like(R, np.nan)
+        return nan.copy(), nan.copy(), nan.copy()
     a_v = a_t[valid]
     b_v = b_t[valid]
 
@@ -851,11 +837,6 @@ def predict_pga_pgv(
     epsg = f"epsg:326{utm_zone:02d}" if lat >= 0 else f"epsg:327{utm_zone:02d}"
     epi_x, epi_y = lonlat_to_utm(lon, lat, utm_zone)
 
-    r_scan = np.arange(1.0, extent + 1.0, 1.0)  # 1~extent km，间隔 1 km
-    pga_long, pga_short, pgv_long, pgv_short = calc_axis_curves(
-        Ms, region, r_scan
-    )
-
     sta_lon = np.asarray(sta_lon, dtype=float)
     sta_lat = np.asarray(sta_lat, dtype=float)
     if sta_lon.shape != sta_lat.shape:
@@ -868,17 +849,12 @@ def predict_pga_pgv(
     dx = (sx - epi_x) / 1000.0
     dy = (sy - epi_y) / 1000.0
     R = np.hypot(dx, dy)  # 震中距（km）
-    # θ = 台站相对正东的方位角 - 长轴相对正东的方位角（90°-strike）
-    theta = np.arctan2(dy, dx) - math.radians(90.0 - strike)
-
-    # 批量向量化求解（PGA 和 PGV 各自一套衰减曲线）
-    pga, _, _ = _solve_values(pga_long, pga_short, r_scan, R, theta)
-    pgv, _, _ = _solve_values(pgv_long, pgv_short, r_scan, R, theta)
+    # 与 vs_Obs、震中反演共用同一个解析椭圆场，不再依赖 1 km 采样插值。
+    field = GB18306EllipseField(region, Ms, extent=extent)
+    _, pga, pgv, *_ = field.predict(lon, lat, strike, sta_lon.ravel(), sta_lat.ravel())
 
     if verbose:
-        for slon, slat, r, p, v in zip(
-            sta_lon.ravel(), sta_lat.ravel(), R, pga, pgv
-        ):
+        for slon, slat, r, p, v in zip(sta_lon.ravel(), sta_lat.ravel(), R, pga, pgv):
             out = f"台站 ({slon:.4f}, {slat:.4f})：R = {r:7.1f} km，"
             if math.isnan(p):
                 out += "超出场范围，无法预测"
@@ -925,11 +901,6 @@ def export_station_table(
     epsg = f"epsg:326{utm_zone:02d}" if lat >= 0 else f"epsg:327{utm_zone:02d}"
     epi_x, epi_y = lonlat_to_utm(lon, lat, utm_zone)
 
-    r_scan = np.arange(1.0, extent + 1.0, 1.0)
-    pga_long, pga_short, pgv_long, pgv_short = calc_axis_curves(
-        Ms, region, r_scan
-    )
-
     sta_lon = np.asarray(sta_lon, dtype=float)
     sta_lat = np.asarray(sta_lat, dtype=float)
     if sta_lon.shape != sta_lat.shape:
@@ -941,11 +912,10 @@ def export_station_table(
     dx = (sx - epi_x) / 1000.0
     dy = (sy - epi_y) / 1000.0
     R = np.hypot(dx, dy)
-    theta = np.arctan2(dy, dx) - math.radians(90.0 - strike)
-
-    # 椭圆几何（长轴距/短轴距）按 PGA 曲线求；PGA、PGV 各自取值
-    pga, a_eq, b_eq = _solve_values(pga_long, pga_short, r_scan, R, theta)
-    pgv, _, _ = _solve_values(pgv_long, pgv_short, r_scan, R, theta)
+    field = GB18306EllipseField(region, Ms, extent=extent)
+    _, pga, pgv, _, _, a_eq, b_eq, _, _ = field.predict(
+        lon, lat, strike, sta_lon.ravel(), sta_lat.ravel()
+    )
 
     if sta_id is None:
         sta_id = [f"S{i + 1}" for i in range(R.size)]
@@ -1015,9 +985,7 @@ def random_stations(lon, lat, strike, region, Ms, extent=400, n=8, seed=42):
         r_max = (
             a_max
             * b_max
-            / np.sqrt(
-                (b_max * np.cos(theta)) ** 2 + (a_max * np.sin(theta)) ** 2
-            )
+            / np.sqrt((b_max * np.cos(theta)) ** 2 + (a_max * np.sin(theta)) ** 2)
         )
         ok = R <= r_max  # 只保留椭圆内的点
         R = R[ok]
@@ -1048,14 +1016,10 @@ def _pga_pgv_grids(lon, lat, strike, region, Ms, extent=400):
 
     # 第 1 步：长短轴衰减曲线
     r_scan = np.arange(1.0, extent + 1.0, 1.0)  # 1~extent km
-    pga_long, pga_short, pgv_long, pgv_short = calc_axis_curves(
-        Ms, region, r_scan
-    )
+    pga_long, pga_short, pgv_long, pgv_short = calc_axis_curves(Ms, region, r_scan)
 
     # 第 2 步：椭圆场点云（含走向旋转）
-    angle = math.radians(
-        90.0 - strike
-    )  # 走向(自北顺时针) → UTM 旋转角(自东逆时针)
+    angle = math.radians(90.0 - strike)  # 走向(自北顺时针) → UTM 旋转角(自东逆时针)
     pts_pga = calc_field_ellipse(pga_long, pga_short, r_scan, angle)
     pts_pgv = calc_field_ellipse(pgv_long, pgv_short, r_scan, angle)
 
@@ -1102,12 +1066,8 @@ def plot_pga_pgv_fields(
     CALC_GMM._validate_input(region, "长轴")  # 分区写错会在这里报错
     strike = strike % 360.0  # 走向归一到 0~360°
 
-    utm_zone = int((lon + 180.0) // 6.0) + 1
-    epsg = f"epsg:326{utm_zone:02d}" if lat >= 0 else f"epsg:327{utm_zone:02d}"
-    epi_x, epi_y = lonlat_to_utm(lon, lat, utm_zone)
-
     # ---------- 第 1~3 步：衰减曲线 → 点云 → 插值网格（共用函数）----------
-    lons, lats, g_pga, g_pgv, utm_zone, epi_x, epi_y, epsg = _pga_pgv_grids(
+    lons, lats, g_pga, g_pgv, utm_zone, *_ = _pga_pgv_grids(
         lon, lat, strike, region, Ms, extent
     )
 
@@ -1155,9 +1115,7 @@ def plot_pga_pgv_fields(
         extend="both",
     )
     # contour：黑色等值线（分界值位置），并标注数值
-    cs = ax.contour(
-        lons, lats, g_pga, levels=PGA_LEVELS, colors="k", linewidths=0.5
-    )
+    cs = ax.contour(lons, lats, g_pga, levels=PGA_LEVELS, colors="k", linewidths=0.5)
     ax.clabel(cs, fmt="%.0f", fontsize=6)
     # 色标：刻度 = 分界值
     cb = fig.colorbar(cf, ax=ax, ticks=PGA_LEVELS, pad=0.05, shrink=0.8)
@@ -1176,9 +1134,7 @@ def plot_pga_pgv_fields(
         norm=norm_pgv,
         extend="both",
     )
-    cs = ax.contour(
-        lons, lats, g_pgv, levels=PGV_LEVELS, colors="k", linewidths=0.5
-    )
+    cs = ax.contour(lons, lats, g_pgv, levels=PGV_LEVELS, colors="k", linewidths=0.5)
     ax.clabel(cs, fmt=FuncFormatter(lambda v, pos: fmt_pgv(v)), fontsize=6)
     cb = fig.colorbar(cf, ax=ax, ticks=PGV_LEVELS, pad=0.05, shrink=0.8)
     cb.ax.set_yticklabels([fmt_pgv(x) for x in PGV_LEVELS])
@@ -1200,7 +1156,7 @@ def plot_pga_pgv_fields(
             "",
             xy=(arr_lon, arr_lat),
             xytext=(lon, lat),
-            arrowprops=dict(arrowstyle="->", color="black", lw=1.2),
+            arrowprops={"arrowstyle": "->", "color": "black", "lw": 1.2},
         )
         ax.text(
             arr_lon,
@@ -1407,7 +1363,7 @@ def plot_gb18306_all(
     utm_zone = int((lon + 180.0) // 6.0) + 1
 
     # ---------- 云图数据（共用函数）----------
-    lons_i, lats_i, g_I, utm_zone, epi_x, epi_y, epsg = _intensity_grids(
+    _lons_i, _lats_i, g_I, utm_zone, epi_x, epi_y, epsg = _intensity_grids(
         lon, lat, strike, region, Ms, extent
     )
     lons, lats, g_pga, g_pgv, utm_zone, epi_x, epi_y, epsg = _pga_pgv_grids(
@@ -1453,9 +1409,7 @@ def plot_gb18306_all(
         )
         # 台站烈度（烈度云图圆点填色用）
         fwd = Transformer.from_crs("epsg:4326", epsg, always_xy=True)
-        sx, sy = np.asarray(
-            fwd.transform(sta_lon_a.ravel(), sta_lat_a.ravel())
-        )
+        sx, sy = np.asarray(fwd.transform(sta_lon_a.ravel(), sta_lat_a.ravel()))
         dx = (sx - epi_x) / 1000.0
         dy = (sy - epi_y) / 1000.0
         R_sta = np.hypot(dx, dy)
@@ -1498,9 +1452,7 @@ def plot_gb18306_all(
             lambda v: to_roman(v),
         ),
     ]
-    for i, (grid, levels, norm, title, cbar_label, label_fmt) in enumerate(
-        cloud_cfgs
-    ):
+    for i, (grid, levels, norm, title, cbar_label, label_fmt) in enumerate(cloud_cfgs):
         ax = axs[0, i]
         # 填色云图 + 等值线 + 数值标注
         cf = ax.contourf(
@@ -1512,12 +1464,8 @@ def plot_gb18306_all(
             norm=norm,
             extend="both",
         )
-        cs = ax.contour(
-            lons, lats, grid, levels=levels, colors="k", linewidths=0.5
-        )
-        ax.clabel(
-            cs, fmt=FuncFormatter(lambda v, pos, f=label_fmt: f(v)), fontsize=6
-        )
+        cs = ax.contour(lons, lats, grid, levels=levels, colors="k", linewidths=0.5)
+        ax.clabel(cs, fmt=FuncFormatter(lambda v, pos, f=label_fmt: f(v)), fontsize=6)
         cb = fig.colorbar(cf, ax=ax, ticks=levels, pad=0.03, shrink=0.8)
         cb.ax.set_yticklabels([label_fmt(x) for x in levels])
         cb.set_label(cbar_label, fontsize=8)
@@ -1533,7 +1481,7 @@ def plot_gb18306_all(
             "",
             xy=(arr_lon, arr_lat),
             xytext=(lon, lat),
-            arrowprops=dict(arrowstyle="->", color="black", lw=1.2),
+            arrowprops={"arrowstyle": "->", "color": "black", "lw": 1.2},
         )
         ax.text(
             arr_lon,
@@ -1550,22 +1498,14 @@ def plot_gb18306_all(
             vals = (
                 I_pred
                 if i == 0
-                else (
-                    pga_pred
-                    if i == 1
-                    else (pgv_pred if i == 2 else I17742_pred)
-                )
+                else (pga_pred if i == 1 else (pgv_pred if i == 2 else I17742_pred))
             )
             for j, (slon, slat, val) in enumerate(
                 zip(sta_lon_a.ravel(), sta_lat_a.ravel(), vals.ravel())
             ):
                 if math.isnan(val):
                     continue
-                face = (
-                    intensity_color(val)
-                    if (i == 0 or i == 3)
-                    else cmap(norm(val))
-                )
+                face = intensity_color(val) if (i == 0 or i == 3) else cmap(norm(val))
                 ax.scatter(
                     slon,
                     slat,
@@ -1737,14 +1677,12 @@ def export_all_table(
 
     每个台站的计算流程：
         ① 经纬度 → UTM → 相对震中的 (dx, dy) → 震中距 R、相对长轴夹角 θ；
-        ② 在 PGA/PGV 衰减场上解出 PGA、PGV 值；先取整到 2 位小数，
-           再用取整后的值按解析公式反算各自所在椭圆的长轴距、短轴距
+        ② 在 PGA/PGV 衰减场上解出 PGA、PGV 值及各自所在椭圆长短轴距；
+           全部派生量使用完整精度计算，仅在最终表格显示时取整
            （Repi_long_PGA / Repi_short_PGA 等，与 class 的
             invert_R_from_aE / invert_R_from_vE 严格一致）；
         ③ 在烈度圈椭圆族上解出 GB18306 烈度，以及所在烈度圈椭圆的
-           长轴距、短轴距（Repi_long_Intensity / Repi_short_Intensity）。
-           先对烈度取整到 2 位小数、再用取整后的值反算长短轴，表内
-           严格自洽，可用 invert_R(Intensity, Ms, region, "长轴"/"短轴") 验证；
+           长轴距、短轴距（Repi_long_Intensity / Repi_short_Intensity）；
         ④ 仪器烈度：
             Intensity          = GB18306 衰减关系直接反算
                                 （I = A + B*Ms + C*lg(R + R0)）；
@@ -1788,13 +1726,7 @@ def export_all_table(
     epsg = f"epsg:326{utm_zone:02d}" if lat >= 0 else f"epsg:327{utm_zone:02d}"
     epi_x, epi_y = lonlat_to_utm(lon, lat, utm_zone)
 
-    # ---------- ② 长短轴衰减曲线（1~extent km）----------
-    r_scan = np.arange(1.0, extent + 1.0, 1.0)
-    pga_long, pga_short, pgv_long, pgv_short = calc_axis_curves(
-        Ms, region, r_scan
-    )
-
-    # ---------- ③ 台站批量投影 → 震中距 R、相对长轴夹角 theta ----------
+    # ---------- ② 台站批量投影 → 震中距 R ----------
     sta_lon = np.asarray(sta_lon, dtype=float)
     sta_lat = np.asarray(sta_lat, dtype=float)
     if sta_lon.shape != sta_lat.shape:
@@ -1805,32 +1737,17 @@ def export_all_table(
     dx = (sx - epi_x) / 1000.0
     dy = (sy - epi_y) / 1000.0
     R = np.hypot(dx, dy)
-    theta = np.arctan2(dy, dx) - math.radians(90.0 - strike)
-
-    # ---------- ④ 解 PGA/PGV 值 + 各自所在椭圆长短轴 ----------
-    pga_raw, _, _ = _solve_values(pga_long, pga_short, r_scan, R, theta)
-    pgv_raw, _, _ = _solve_values(pgv_long, pgv_short, r_scan, R, theta)
-    # 先取整到 2 位小数，再用取整后的值解析反算所在椭圆，
-    # 保证表内 Repi_long/Repi_short_PGA/PGV 与 PGA/PGV 严格自洽
-    pga = np.round(pga_raw, 2)
-    pgv = np.round(pgv_raw, 2)
-    a_eq_pga, b_eq_pga = _gmm_ellipse_radii(pga, Ms, region, "aE")
-    a_eq_pgv, b_eq_pgv = _gmm_ellipse_radii(pgv, Ms, region, "vE")
-
-    # ---------- ⑤ 两套烈度 ----------
-    # 烈度①：GB18306 衰减关系直接反算。先对烈度取整到 2 位小数，
-    # 再用它反算所在烈度圈椭圆长短轴，保证表内严格自洽
-    I_raw, _, _ = _solve_intensity(R, theta, region, Ms, extent)
-    I = np.round(I_raw, 2)
-    a_eq_i, b_eq_i = _ellipse_radii(I, region, Ms)
-    a_eq_i = np.maximum(a_eq_i, 0.1)  # 与 invert_R 的 0.1 km 截断一致
-    b_eq_i = np.maximum(b_eq_i, 0.1)
-    # 烈度②：GB/T 17742-2020 仪器烈度（由 PGA/PGV 换算，保留 1 位小数）
-    I17742 = GB17742_2020_Cal_instrument_intensity.cal_Intensity_matrix(
-        pga, pgv
+    # ---------- ③ 共享解析场：烈度/PGA/PGV 及各自等值椭圆 ----------
+    field = GB18306EllipseField(region, Ms, extent=extent)
+    I, pga, pgv, a_eq_i, b_eq_i, a_eq_pga, b_eq_pga, a_eq_pgv, b_eq_pgv = field.predict(
+        lon, lat, strike, sta_lon.ravel(), sta_lat.ravel()
     )
 
-    # ---------- ⑥ 组表 + 导出 ----------
+    # ---------- ④ GB/T 17742 仪器烈度 ----------
+    # 烈度②：GB/T 17742-2020 仪器烈度（由 PGA/PGV 换算，保留 1 位小数）
+    I17742 = GB17742_2020_Cal_instrument_intensity.cal_Intensity_matrix(pga, pgv)
+
+    # ---------- ⑤ 组表 + 导出（只在显示/序列化阶段取整） ----------
     if sta_id is None:
         sta_id = [f"S{i + 1}" for i in range(R.size)]
     else:
@@ -1843,9 +1760,7 @@ def export_all_table(
             "Sta_lati": np.round(sta_lat.ravel(), 4),
             "Repi(km)": np.round(R, 2),  # 震中距
             "Repi_long_Intensity(km)": np.round(a_eq_i, 2),  # 烈度圈椭圆长轴距
-            "Repi_short_Intensity(km)": np.round(
-                b_eq_i, 2
-            ),  # 烈度圈椭圆短轴距
+            "Repi_short_Intensity(km)": np.round(b_eq_i, 2),  # 烈度圈椭圆短轴距
             "Repi_long_PGA(km)": np.round(a_eq_pga, 2),  # PGA 椭圆长轴距
             "Repi_short_PGA(km)": np.round(b_eq_pga, 2),  # PGA 椭圆短轴距
             "Repi_long_PGV(km)": np.round(a_eq_pgv, 2),  # PGV 椭圆长轴距
@@ -1853,9 +1768,7 @@ def export_all_table(
             "PGA(gal)": np.round(pga, 2),
             "PGV(cm/s)": np.round(pgv, 2),
             "Intensity": np.round(I, 2),
-            "Intensity_roman": [
-                to_roman(v) if not math.isnan(v) else "NaN" for v in I
-            ],
+            "Intensity_roman": [to_roman(v) if not math.isnan(v) else "NaN" for v in I],
             "Intensity_GB17742": np.round(I17742, 1),
             "Intensity_roman_GB17742": [
                 to_roman(v) if not math.isnan(v) else "NaN" for v in I17742
@@ -1865,9 +1778,7 @@ def export_all_table(
 
     if output_file is None:
         os.makedirs("Test_output", exist_ok=True)
-        output_file = (
-            f"./Test_output/GB18306_pre_all_table_{region}_Ms{Ms:g}.txt"
-        )
+        output_file = f"./Test_output/GB18306_pre_all_table_{region}_Ms{Ms:g}.txt"
     df.to_csv(output_file, sep="\t", index=False, encoding="utf-8-sig")
     print(f"已导出：{os.path.abspath(output_file)}")
     return df

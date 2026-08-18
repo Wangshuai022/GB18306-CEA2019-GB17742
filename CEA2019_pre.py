@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 CEA2019 地震动参数预测（PGA / PGV / PSA 周期点）—— 应用主程序
 ==============================================================
@@ -46,35 +45,28 @@ import math
 import os
 import sys
 
+import matplotlib
 import numpy as np
 import pandas as pd
 
-import matplotlib
-
 matplotlib.use("Agg")  # 不弹窗口，只保存图片
 import matplotlib.pyplot as plt
-from matplotlib.colors import ListedColormap, BoundaryNorm
+from matplotlib.colors import BoundaryNorm, ListedColormap
 
 # scipy 用于云图插值；没装时云图无法生成（预测/表格不受影响）
 try:
     from scipy.interpolate import griddata
 
     HAVE_GRIDDATA = True
-except Exception:
+except ImportError:
     HAVE_GRIDDATA = False
-
-# 让中文提示在 Windows 命令行里正常显示
-try:
-    sys.stdout.reconfigure(encoding="utf-8")
-except Exception:
-    pass
 
 # UTM 投影（经纬度 → 公里坐标），没装时自动退化为简单近似
 try:
     from pyproj import Transformer
 
     HAVE_PYPROJ = True
-except Exception:
+except ImportError:
     HAVE_PYPROJ = False
 
 # 找到 CEA2019_class.py（和本文件同一目录）
@@ -82,6 +74,7 @@ THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 if THIS_DIR not in sys.path:
     sys.path.insert(0, THIS_DIR)
 from CEA2019_class import CEA2019
+from ellipse_fields import CEA2019EllipseField, cea_period_coeffs
 
 # 字体：英文用 Times New Roman，中文自动回退 SimHei
 plt.rcParams["font.family"] = [
@@ -152,8 +145,7 @@ def validate_periods(periods):
         Tf = float(T)
         if Tf < 0:
             raise ValueError(
-                f"周期 {Tf:g} 不支持，只允许 -1(PGA)、-2(PGV)、"
-                f"0(PGA) 和正数周期"
+                f"周期 {Tf:g} 不支持，只允许 -1(PGA)、-2(PGV)、" f"0(PGA) 和正数周期"
             )
         out.append(Tf)
     return out
@@ -170,11 +162,7 @@ def _region_core(region):
 def km_to_lonlat(lon, lat, east_km, north_km, utm_zone):
     """相对震中的 东向(km)/北向(km) → 经纬度（UTM 投影）"""
     if HAVE_PYPROJ:
-        epsg = (
-            f"epsg:326{utm_zone:02d}"
-            if lat >= 0
-            else f"epsg:327{utm_zone:02d}"
-        )
+        epsg = f"epsg:326{utm_zone:02d}" if lat >= 0 else f"epsg:327{utm_zone:02d}"
         fwd = Transformer.from_crs("epsg:4326", epsg, always_xy=True)
         epi_x, epi_y = fwd.transform(lon, lat)
         inv = Transformer.from_crs(epsg, "epsg:4326", always_xy=True)
@@ -238,34 +226,7 @@ def _period_coeffs(region_core, axis, period, M):
 
     返回 (A, B, C, sigma, exp_term)，exp_term = D*exp(E*M)。
     """
-    key = (region_core, axis, float(period), M)
-    if key in _COEFF_CACHE:
-        return _COEFF_CACHE[key]
-
-    cal = _get_cal(region_core, axis)
-    T = float(period)
-    if T in (-1.0, 0.0):
-        row = cal._get_coefficients(-1)  # PGA 行
-    elif T == -2.0:
-        row = cal._get_coefficients(-2)  # PGV 行
-    elif 0.0 < T < 0.04:
-        # 0~0.04s：PGA(0s) 与 PSA(0.04s) 之间线性插值
-        row_pga = cal._get_coefficients(-1)
-        row_04 = cal._get_coefficients(0.04)
-        w = T / 0.04
-        row = {}
-        for col in ("A1", "B1", "A2", "B2", "C", "D", "E", "σ"):
-            row[col] = row_pga[col] + (row_04[col] - row_pga[col]) * w
-    else:
-        row = cal._get_coefficients(T)
-
-    A = row["A1"] if M < 6.5 else row["A2"]
-    B = row["B1"] if M < 6.5 else row["B2"]
-    C = row["C"]
-    sigma = row["σ"]
-    exp_term = row["D"] * np.exp(row["E"] * M)
-    _COEFF_CACHE[key] = (A, B, C, sigma, exp_term)
-    return _COEFF_CACHE[key]
+    return cea_period_coeffs(region_core, axis, period, M)
 
 
 def _period_value(T, M, R, region_core, axis):
@@ -405,27 +366,21 @@ def predict_period_values(
         T > 6s 的周期结果为 NaN；场外台站为 NaN。
     """
     periods = validate_periods(periods)
-    rc = _region_core(region)
-    strike = strike % 360.0
-    utm_zone = int((lon + 180.0) // 6.0) + 1
-    epsg = f"epsg:326{utm_zone:02d}" if lat >= 0 else f"epsg:327{utm_zone:02d}"
-    epi_x, epi_y = lonlat_to_utm(lon, lat, utm_zone)
-
     sta_lon = np.asarray(sta_lon, dtype=float)
     sta_lat = np.asarray(sta_lat, dtype=float)
+    if sta_lon.shape != sta_lat.shape:
+        raise ValueError("sta_lon 与 sta_lat 形状必须一致！")
     shape = sta_lon.shape
-    fwd = Transformer.from_crs("epsg:4326", epsg, always_xy=True)
-    sx, sy = np.asarray(fwd.transform(sta_lon.ravel(), sta_lat.ravel()))
-    dx = (sx - epi_x) / 1000.0
-    dy = (sy - epi_y) / 1000.0
-    R = np.hypot(dx, dy)
-    theta = np.arctan2(dy, dx) - math.radians(90.0 - strike)
-
-    r_scan = np.arange(1.0, extent + 1.0, 1.0)
+    field = CEA2019EllipseField(region, Ms, extent=extent)
     out = {}
     for T in periods:
         label = period_label(T)
-        v, _, _ = _solve_period_values(T, Ms, rc, r_scan, R, theta)
+        if float(T) > 6.0:
+            v = np.full(sta_lon.size, np.nan)
+        else:
+            v, _, _ = field.predict_period(
+                T, lon, lat, strike, sta_lon.ravel(), sta_lat.ravel()
+            )
         out[label] = v.reshape(shape)
     return out
 
@@ -453,8 +408,7 @@ def export_period_table(
             Repi_long_PGA(km)  Repi_short_PGA(km) ...
 
     说明：
-        - 值先取整到 2 位小数，再用取整后的值解析反算长短轴，表内严格自洽
-          （可用 CEA2019.invert_R 验证）；
+        - 预测值和椭圆距均用完整精度计算，只在写入表格时取整；
         - 0 < T < 0.04s 按 PGA(0)~PSA(0.04) 线性插值；
         - T > 6s：值、长短轴全部 NaN（不外插）；
         - 场外台站：NaN。
@@ -476,9 +430,7 @@ def export_period_table(
     dx = (sx - epi_x) / 1000.0
     dy = (sy - epi_y) / 1000.0
     R = np.hypot(dx, dy)
-    theta = np.arctan2(dy, dx) - math.radians(90.0 - strike)
-
-    r_scan = np.arange(1.0, extent + 1.0, 1.0)
+    field = CEA2019EllipseField(rc, Ms, extent=extent)
 
     if sta_id is None:
         sta_id = [f"S{i + 1}" for i in range(R.size)]
@@ -502,10 +454,10 @@ def export_period_table(
             df[f"Repi_long_{label}(km)"] = np.full(R.size, np.nan)
             df[f"Repi_short_{label}(km)"] = np.full(R.size, np.nan)
             continue
-        v_raw, _, _ = _solve_period_values(T, Ms, rc, r_scan, R, theta)
-        v = np.round(v_raw, 2)  # 先取整
-        a_eq, b_eq = _ellipse_radii_for_period(v, T, Ms, rc)  # 再反算椭圆
-        df[f"{label}({unit})"] = v
+        v, a_eq, b_eq = field.predict_period(
+            T, lon, lat, strike, sta_lon.ravel(), sta_lat.ravel()
+        )
+        df[f"{label}({unit})"] = np.round(v, 2)
         df[f"Repi_long_{label}(km)"] = np.round(a_eq, 2)
         df[f"Repi_short_{label}(km)"] = np.round(b_eq, 2)
 
@@ -636,12 +588,8 @@ def plot_period_fields(
         norm = BoundaryNorm(levels, ncolors=len(USGS_MMI_COLORS))
 
         # 该周期点的长/短轴中值 + ±1σ 曲线
-        long_m, long_lo, long_up = _period_curves_sigma(
-            T, Ms, rc, "长轴", r_scan
-        )
-        short_m, short_lo, short_up = _period_curves_sigma(
-            T, Ms, rc, "短轴", r_scan
-        )
+        long_m, long_lo, long_up = _period_curves_sigma(T, Ms, rc, "长轴", r_scan)
+        short_m, short_lo, short_up = _period_curves_sigma(T, Ms, rc, "短轴", r_scan)
 
         # ===== 第一排：云图 =====
         pts = calc_field_ellipse(long_m, short_m, r_scan, angle)
@@ -676,7 +624,7 @@ def plot_period_fields(
             "",
             xy=(arr_lon, arr_lat),
             xytext=(lon, lat),
-            arrowprops=dict(arrowstyle="->", color="black", lw=1.2),
+            arrowprops={"arrowstyle": "->", "color": "black", "lw": 1.2},
         )
 
         dlat = extent * 1.05 / 111.32
@@ -692,9 +640,7 @@ def plot_period_fields(
         # ===== 第二排：衰减曲线（长轴/短轴 ±1σ）=====
         ax = axs[1, i]
         ax.plot(r_scan, long_m, color="tab:red", lw=1.4, label="长轴")
-        ax.plot(
-            r_scan, short_m, color="tab:blue", lw=1.4, ls="--", label="短轴"
-        )
+        ax.plot(r_scan, short_m, color="tab:blue", lw=1.4, ls="--", label="短轴")
         ax.fill_between(
             r_scan,
             long_lo,

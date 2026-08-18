@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # 国标烈度转换关系：GB/T 17742-2020 仪器烈度换算（PGA / PGV → 烈度）
 """
 GB/T 17742-2020 中国地震烈度表 —— 仪器烈度换算
@@ -29,14 +28,6 @@ GB/T 17742-2020 中国地震烈度表 —— 仪器烈度换算
 
 import numpy as np
 
-# 让中文提示在 Windows 命令行里正常显示
-try:
-    import sys
-
-    sys.stdout.reconfigure(encoding="utf-8")
-except Exception:
-    pass
-
 
 class GB17742_2020_Cal_instrument_intensity:
     """
@@ -49,10 +40,15 @@ class GB17742_2020_Cal_instrument_intensity:
         GB17742_2020_Cal_instrument_intensity.cal_Intensity(100, 10)
     """
 
+    @staticmethod
     def cal_Intensity(PGA0, PGV0):
         """
         单个台站：输入 PGA（gal）、PGV（cm/s），输出烈度（保留 1 位小数）
         """
+        if not np.isfinite(PGA0) or PGA0 <= 0:
+            raise ValueError("PGA 必须是正有限数")
+        if not np.isfinite(PGV0) or PGV0 <= 0:
+            raise ValueError("PGV 必须是正有限数")
         # 用 PGA 算一个烈度分量
         I_A = 3.17 * np.log10(PGA0 / 100) + 6.59
         # 用 PGV 算一个烈度分量
@@ -71,6 +67,7 @@ class GB17742_2020_Cal_instrument_intensity:
         I10 = round(I0, 1)
         return I10
 
+    @staticmethod
     def cal_Intensity_matrix(PGA0, PGV0):
         """
         多个台站（数组/矩阵）：输入 PGA（gal）、PGV（cm/s），输出烈度数组
@@ -79,6 +76,10 @@ class GB17742_2020_Cal_instrument_intensity:
         # 转成 numpy 数组（传标量、列表、矩阵都可以）
         PGA0 = np.asarray(PGA0)
         PGV0 = np.asarray(PGV0)
+        if np.any(np.isfinite(PGA0) & (PGA0 <= 0)):
+            raise ValueError("PGA 中的有限值必须大于 0")
+        if np.any(np.isfinite(PGV0) & (PGV0 <= 0)):
+            raise ValueError("PGV 中的有限值必须大于 0")
 
         # 用 PGA 算烈度分量
         I_A = 3.17 * np.log10(PGA0 / 100) + 6.59
@@ -101,6 +102,7 @@ class GB17742_2020_Cal_instrument_intensity:
         # 保留 1 位小数
         return np.round(I0, 1)
 
+    @staticmethod
     def cal_Intensity_matrix_PGV(PGV0):
         """
         只有 PGV（cm/s）时用：PGV → 烈度（保留 1 位小数）
@@ -108,6 +110,8 @@ class GB17742_2020_Cal_instrument_intensity:
         """
         # 转成 numpy 数组
         PGV0 = np.asarray(PGV0)
+        if np.any(np.isfinite(PGV0) & (PGV0 <= 0)):
+            raise ValueError("PGV 中的有限值必须大于 0")
 
         # 用 PGV 算烈度
         I_V = 3 * np.log10(PGV0 / 100) + 9.77
@@ -126,6 +130,4 @@ if __name__ == "__main__":
     Cal = GB17742_2020_Cal_instrument_intensity
     print("单个点：", Cal.cal_Intensity(195, 17.7))
     print("多个点：", Cal.cal_Intensity_matrix([50, 100, 200], [5, 10, 20]))
-    print(
-        "只有 PGV：", Cal.cal_Intensity_matrix_PGV([5, 10, 20, 150, 200, 400])
-    )
+    print("只有 PGV：", Cal.cal_Intensity_matrix_PGV([5, 10, 20, 150, 200, 400]))

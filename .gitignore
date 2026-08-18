@@ -1,2 +1,12 @@
 __pycache__/
 *.pyc
+
+# Local backups and generated outputs
+backup_before_optimization_*/
+Test_output/
+其他/
+*_观测结果可视化散点图.png
+
+# Local earthquake-record tables; keep the documented Dingri example
+*_total_info_Bandpass_*.txt
+!20250107_China_Dingri_total_info_Bandpass_0.05_20Hz.txt

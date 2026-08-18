@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 CEA2019 地震动参数衰减关系 class（GB 18306-2015 区划图的更新版）
 ================================================================
@@ -34,24 +33,12 @@ C、D、E、σ 不分段；σ 为对数标准差，±1σ = Y/10^σ ~ Y*10^σ。
 负责把关；本 class 内部对超界周期会取边界值。
 """
 
-import pandas as pd
-import numpy as np
-from bisect import bisect
 import os
-from matplotlib import rcParams
+from bisect import bisect
+from typing import ClassVar
 
-# 让中文提示在 Windows 命令行里正常显示
-try:
-    import sys
-
-    sys.stdout.reconfigure(encoding="utf-8")
-except Exception:
-    pass
-
-
-# 设置中文字体和样式
-rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei", "DejaVu Sans"]
-rcParams["axes.unicode_minus"] = False
+import numpy as np
+import pandas as pd
 
 
 class CEA2019:
@@ -68,24 +55,32 @@ class CEA2019:
 
     # Excel 系数文件名（必须与本文件同一目录）
     _EXCEL_NAME = "GB长短轴衰减关系系数--区划2019.xlsx"
+    _SHEET_NAMES_CACHE: ClassVar[dict[str, tuple[str, ...]]] = {}
+    _SHEET_CACHE: ClassVar[dict[tuple[str, str], pd.DataFrame]] = {}
 
     def __init__(self, region, axis):
         # 动态获取本文件所在目录，拼出 Excel 完整路径（换机器也能找到）
         module_dir = os.path.dirname(os.path.abspath(__file__))
         self.excel_path = os.path.join(module_dir, self._EXCEL_NAME)
-        # 读取所有 sheet 名称，用于校验"区域+轴向"是否合法
-        self.all_sheets = pd.ExcelFile(self.excel_path).sheet_names
         # 验证文件存在性（找不到直接报错，避免后面莫名失败）
         if not os.path.exists(self.excel_path):
             raise FileNotFoundError(f"系数文件未找到：{self.excel_path}")
+        # 同一进程只读取一次工作簿目录和每张系数表。
+        if self.excel_path not in self._SHEET_NAMES_CACHE:
+            with pd.ExcelFile(self.excel_path) as workbook:
+                self._SHEET_NAMES_CACHE[self.excel_path] = tuple(workbook.sheet_names)
+        self.all_sheets = self._SHEET_NAMES_CACHE[self.excel_path]
         # sheet 名格式：{region}区{axis}，如"青藏区长轴"
         sheet_name = f"{region}区{axis}"
         if sheet_name not in self.all_sheets:
-            raise ValueError(
-                f"未找到表格: {sheet_name}，可用表格: {self.all_sheets}"
-            )
+            raise ValueError(f"未找到表格: {sheet_name}，可用表格: {self.all_sheets}")
         # 读取该区域、该轴向的整张系数表
-        self.df = pd.read_excel(self.excel_path, sheet_name=sheet_name)
+        cache_key = (self.excel_path, sheet_name)
+        if cache_key not in self._SHEET_CACHE:
+            self._SHEET_CACHE[cache_key] = pd.read_excel(
+                self.excel_path, sheet_name=sheet_name
+            )
+        self.df = self._SHEET_CACHE[cache_key]
 
     def _get_coefficients(self, T):
         """
@@ -163,44 +158,43 @@ class CEA2019:
 
         公式：lg(Y) = A + B*M - C*lg(R + D*exp(E*M))
         """
-        try:
-            # 1. 获取该周期点的系数行
-            coeff = self._get_coefficients(T)
+        if not np.isfinite(magnitude):
+            raise ValueError("magnitude 必须是有限数")
+        if not np.isfinite(R) or R < 0:
+            raise ValueError("震中距 R 必须是非负有限数")
+        # 1. 获取该周期点的系数行
+        coeff = self._get_coefficients(T)
 
-            # 2. 提取系数（σ 是希腊字母列名）
-            A1 = coeff["A1"]
-            B1 = coeff["B1"]
-            A2 = coeff["A2"]
-            B2 = coeff["B2"]
-            C = coeff["C"]
-            D = coeff["D"]
-            E = coeff["E"]
-            sigma = coeff["σ"]
+        # 2. 提取系数（σ 是希腊字母列名）
+        A1 = coeff["A1"]
+        B1 = coeff["B1"]
+        A2 = coeff["A2"]
+        B2 = coeff["B2"]
+        C = coeff["C"]
+        D = coeff["D"]
+        E = coeff["E"]
+        sigma = coeff["σ"]
 
-            # 3. 按震级分段选择 A、B（M < 6.5 用小震级段）
-            if magnitude < 6.5:
-                A = A1
-                B = B1
-            else:
-                A = A2
-                B = B2
+        # 3. 按震级分段选择 A、B（M < 6.5 用小震级段）
+        if magnitude < 6.5:
+            A = A1
+            B = B1
+        else:
+            A = A2
+            B = B2
 
-            # 4. 等效近场距离项：D*exp(E*M)，防止 R→0 时对数发散
-            R_log = np.log10(R + D * np.exp(E * magnitude))
+        # 4. 等效近场距离项：D*exp(E*M)，防止 R→0 时对数发散
+        R_log = np.log10(R + D * np.exp(E * magnitude))
 
-            # 5. lg(Y) = A + B*M - C*lg(R + D*exp(E*M))
-            lg_Y = A + B * magnitude - C * R_log
+        # 5. lg(Y) = A + B*M - C*lg(R + D*exp(E*M))
+        lg_Y = A + B * magnitude - C * R_log
 
-            # 6. 中值及 ±1σ 区间
-            Y = 10**lg_Y
-            lower = 10 ** (lg_Y - sigma)
-            upper = 10 ** (lg_Y + sigma)
+        # 6. 中值及 ±1σ 区间
+        Y = 10**lg_Y
+        lower = 10 ** (lg_Y - sigma)
+        upper = 10 ** (lg_Y + sigma)
 
-            return (Y, lower, upper)
-
-        except Exception as e:
-            print(f"计算失败: {str(e)}")
-            return (None, None, None)
+        return (Y, lower, upper)
 
     def invert_R(self, T, magnitude, Y):
         """
@@ -221,56 +215,55 @@ class CEA2019:
         ±1σ 区间：Y 更大 → 震中距更小；Y 更小 → 震中距更大。
         距离最小截断到 0.01 km。
         """
-        try:
-            # 1. 获取该周期点的系数行
-            coeff = self._get_coefficients(T)
+        if not np.isfinite(magnitude):
+            raise ValueError("magnitude 必须是有限数")
+        if not np.isfinite(Y) or Y <= 0:
+            raise ValueError("地震动参数 Y 必须是正有限数")
+        # 1. 获取该周期点的系数行
+        coeff = self._get_coefficients(T)
 
-            # 2. 提取系数
-            A1 = coeff["A1"]
-            B1 = coeff["B1"]
-            A2 = coeff["A2"]
-            B2 = coeff["B2"]
-            C = coeff["C"]
-            D = coeff["D"]
-            E = coeff["E"]
-            sigma = coeff["σ"]
+        # 2. 提取系数
+        A1 = coeff["A1"]
+        B1 = coeff["B1"]
+        A2 = coeff["A2"]
+        B2 = coeff["B2"]
+        C = coeff["C"]
+        D = coeff["D"]
+        E = coeff["E"]
+        sigma = coeff["σ"]
 
-            # 3. 按震级分段选择 A、B
-            if magnitude < 6.5:
-                A = A1
-                B = B1
-            else:
-                A = A2
-                B = B2
+        # 3. 按震级分段选择 A、B
+        if magnitude < 6.5:
+            A = A1
+            B = B1
+        else:
+            A = A2
+            B = B2
 
-            # 4. lg(Y)
-            lg_Y = np.log10(Y)
+        # 4. lg(Y)
+        lg_Y = np.log10(Y)
 
-            # 5. 等效近场距离项：D*exp(E*M)
-            exp_term = D * np.exp(E * magnitude)
+        # 5. 等效近场距离项：D*exp(E*M)
+        exp_term = D * np.exp(E * magnitude)
 
-            # 6. 反解中值 R
-            R_median = 10 ** ((A + B * magnitude - lg_Y) / C) - exp_term
+        # 6. 反解中值 R
+        R_median = 10 ** ((A + B * magnitude - lg_Y) / C) - exp_term
 
-            # 7. 置信区间
-            # 下界: lg_Y + sigma（Y 更大 → R 更小）
-            lg_Y_upper = lg_Y + sigma
-            R_lower = 10 ** ((A + B * magnitude - lg_Y_upper) / C) - exp_term
+        # 7. 置信区间
+        # 下界: lg_Y + sigma（Y 更大 → R 更小）
+        lg_Y_upper = lg_Y + sigma
+        R_lower = 10 ** ((A + B * magnitude - lg_Y_upper) / C) - exp_term
 
-            # 上界: lg_Y - sigma（Y 更小 → R 更大）
-            lg_Y_lower = lg_Y - sigma
-            R_upper = 10 ** ((A + B * magnitude - lg_Y_lower) / C) - exp_term
+        # 上界: lg_Y - sigma（Y 更小 → R 更大）
+        lg_Y_lower = lg_Y - sigma
+        R_upper = 10 ** ((A + B * magnitude - lg_Y_lower) / C) - exp_term
 
-            # 确保距离不为负
-            R_median = max(R_median, 0.01)
-            R_lower = max(R_lower, 0.01)
-            R_upper = max(R_upper, 0.01)
+        # 确保距离不为负
+        R_median = max(R_median, 0.01)
+        R_lower = max(R_lower, 0.01)
+        R_upper = max(R_upper, 0.01)
 
-            return (R_median, R_lower, R_upper)
-
-        except Exception as e:
-            print(f"反解R失败: {str(e)}")
-            return (None, None, None)
+        return (R_median, R_lower, R_upper)
 
 
 if __name__ == "__main__":

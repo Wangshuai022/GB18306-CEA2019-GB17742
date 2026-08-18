@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 GB 18306-2015 地震动参数衰减关系（俞言祥）
 ==========================================
@@ -60,13 +59,7 @@ GB 18306-2015 地震动参数衰减关系（俞言祥）
 """
 
 import math
-
-# 让中文提示在 Windows 命令行里正常显示
-try:
-    import sys
-    sys.stdout.reconfigure(encoding="utf-8")
-except Exception:
-    pass
+from typing import ClassVar
 
 
 class GB18306_2015_IntensityCal:
@@ -92,7 +85,9 @@ class GB18306_2015_IntensityCal:
     # 参数数据库（包含标准差）
     # 键：(区域, 轴向)，值：(A, B, C, R0, sigma)
     # 来源：GB 高孟潭宣贯教材 172 页
-    _PARAMS = {
+    _PARAMS: ClassVar[
+        dict[tuple[str, str], tuple[float, float, float, float, float]]
+    ] = {
         ("青藏区", "长轴"): (6.4580, 1.2746, -4.4709, 25, 0.6636),
         ("青藏区", "短轴"): (3.3682, 1.2746, -3.3119, 9, 0.6636),
         ("新疆区", "长轴"): (5.6018, 1.4347, -4.4899, 25, 0.5924),
@@ -121,6 +116,10 @@ class GB18306_2015_IntensityCal:
                 lower_1sigma  mean - σ（烈度下限）
                 input_params  本次输入参数（便于追溯）
         """
+        if not math.isfinite(M):
+            raise ValueError("震级 M 必须是有限数")
+        if not math.isfinite(R) or R < 0:
+            raise ValueError("震中距 R 必须是非负有限数")
         # 参数验证（区域、轴向非法时抛 ValueError）
         self._validate_input(region, axis_type)
 
@@ -171,6 +170,8 @@ class GB18306_2015_IntensityCal:
                 lower_1sigma  震中距下限（km）
                 input_params  本次输入参数
         """
+        if not math.isfinite(intensity) or not math.isfinite(M):
+            raise ValueError("烈度和震级 M 必须是有限数")
         # 参数验证
         self._validate_input(region, axis_type)
 
@@ -211,7 +212,7 @@ class GB18306_2015_IntensityCal:
     def _validate_input(self, region: str, axis_type: str):
         """输入参数验证：区域 + 轴向必须是 _PARAMS 里的组合，否则报错并列出可用项"""
         if (region, axis_type) not in self._PARAMS:
-            available = "\n".join([f"{k[0]} ({k[1]})" for k in self._PARAMS.keys()])
+            available = "\n".join([f"{k[0]} ({k[1]})" for k in self._PARAMS])
             raise ValueError(f"无效参数！可用组合：\n{available}")
 
 
@@ -244,8 +245,8 @@ class GB18306_2015_PGA_PGV_GMMs:
         来源：GB 18306-2015 附录。
     """
 
-    VALID_REGIONS = ["东部区", "中部区", "新疆区", "青藏区"]
-    VALID_AXES = ["长轴", "短轴"]
+    VALID_REGIONS = ("东部区", "中部区", "新疆区", "青藏区")
+    VALID_AXES = ("长轴", "短轴")
 
     def __init__(self):
         self._load_parameters()
@@ -384,7 +385,7 @@ class GB18306_2015_PGA_PGV_GMMs:
                     "B1": 0.601,
                     "A2": 0.671,
                     "B2": 0.407,
-                    "C": -1.599,
+                    "C": -1.559,
                     "D": 1.295,
                     "E": 0.331,
                     "sigma": 0.271,
@@ -456,6 +457,8 @@ class GB18306_2015_PGA_PGV_GMMs:
             dict：{A, B, C, D, E, sigma}
         """
         self._validate_input(region, axis)
+        if param_type not in ("aE", "vE"):
+            raise ValueError("param_type 必须是 'aE'(PGA) 或 'vE'(PGV)")
 
         table = self.aE_table if param_type == "aE" else self.vE_table
         params = table[region][axis]
@@ -490,8 +493,10 @@ class GB18306_2015_PGA_PGV_GMMs:
                 aE 单位 gal（cm/s²），vE 单位 cm/s
                 下限 = 中值 / 10^σ，上限 = 中值 * 10^σ
         """
-        if R < 0:
-            raise ValueError("震中距R必须≥0")
+        if not math.isfinite(M):
+            raise ValueError("震级 M 必须是有限数")
+        if not math.isfinite(R) or R < 0:
+            raise ValueError("震中距 R 必须是非负有限数")
 
         def _compute(param_type):
             # 取参数（含震级分段）
@@ -500,8 +505,8 @@ class GB18306_2015_PGA_PGV_GMMs:
             log_term = math.log10(R + params["D"] * math.exp(params["E"] * M))
             # lgY = A + B*M + C*lg(R + D*exp(E*M))
             lgY = params["A"] + params["B"] * M + params["C"] * log_term
-            median = 10**lgY                      # 中值
-            delta = 10 ** params["sigma"]         # ±1σ 倍数
+            median = 10**lgY  # 中值
+            delta = 10 ** params["sigma"]  # ±1σ 倍数
             return (median, median / delta, median * delta)
 
         return _compute("aE"), _compute("vE")
@@ -530,8 +535,10 @@ class GB18306_2015_PGA_PGV_GMMs:
         返回：
             (R中值, R下限, R上限)，单位 km
         """
-        if Y <= 0:
-            raise ValueError("地震动参数Y必须大于0")
+        if not math.isfinite(M):
+            raise ValueError("震级 M 必须是有限数")
+        if not math.isfinite(Y) or Y <= 0:
+            raise ValueError("地震动参数 Y 必须是正有限数")
 
         # 1. 获取参数（含震级分段）
         params = self._get_params(M, region, axis, param_type)
@@ -589,15 +596,20 @@ if __name__ == "__main__":
     # ---------- 自检示例：两个 class 的正算 / 反算 ----------
     cal_i = GB18306_2015_IntensityCal()
     res_i = cal_i.calculate(M=7.5, R=20.85, region="青藏区", axis_type="长轴")
-    print("烈度正算：", {k: round(v, 3) if isinstance(v, float) else v
-                         for k, v in res_i.items()})
+    print(
+        "烈度正算：",
+        {k: round(v, 3) if isinstance(v, float) else v for k, v in res_i.items()},
+    )
     res_ri = cal_i.invert_R(intensity=8.59, M=7.5, region="青藏区", axis_type="长轴")
     print("烈度反算 R(mean) =", round(res_ri["mean"], 2), "km")
 
     cal_g = GB18306_2015_PGA_PGV_GMMs()
-    (aE, aE_lo, aE_up), (vE, vE_lo, vE_up) = \
-        cal_g.calculate(7.5, 26.09, "青藏区", "长轴")
-    print(f"PGA/PGV 正算：aE = {aE:.2f} ({aE_lo:.2f}~{aE_up:.2f}) gal, "
-          f"vE = {vE:.2f} ({vE_lo:.2f}~{vE_up:.2f}) cm/s")
+    (aE, aE_lo, aE_up), (vE, vE_lo, vE_up) = cal_g.calculate(
+        7.5, 26.09, "青藏区", "长轴"
+    )
+    print(
+        f"PGA/PGV 正算：aE = {aE:.2f} ({aE_lo:.2f}~{aE_up:.2f}) gal, "
+        f"vE = {vE:.2f} ({vE_lo:.2f}~{vE_up:.2f}) cm/s"
+    )
     R_med, R_lo, R_up = cal_g.invert_R_from_aE(297.27, 7.5, "青藏区", "长轴")
     print(f"PGA 反算 R = {R_med:.2f} ({R_lo:.2f}~{R_up:.2f}) km")

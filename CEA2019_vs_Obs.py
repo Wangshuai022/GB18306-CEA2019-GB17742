@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 CEA2019 预测 vs 实测 —— 基于给定震中的 4×N 综合绘图与统计表
 ============================================================
@@ -40,41 +39,37 @@ import math
 import os
 import sys
 
+import matplotlib
 import numpy as np
 import pandas as pd
-import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.colors import BoundaryNorm, ListedColormap
-
-try:
-    sys.stdout.reconfigure(encoding="utf-8")
-except Exception:
-    pass
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 from CEA2019_pre import (
     USGS_MMI_COLORS,
-    _period_levels,
-    period_label,
-    unit_label,
-    fmt_pgv,
-    fmt_psa,
-    _region_core,
+    _ellipse_radii_for_period,
     _period_coeffs,
     _period_curves_sigma,
-    _ellipse_radii_for_period,
-    predict_period_values,
+    _period_levels,
+    _region_core,
+    fmt_pgv,
+    fmt_psa,
     km_to_lonlat,
+    period_label,
+    predict_period_values,
+    unit_label,
 )
+from ellipse_fields import CEA2019EllipseField
 from GB17742_class import GB17742_2020_Cal_instrument_intensity as CAL_INT
 from stat_violin import (
     apply_style,
-    half_violin_box_scatter,
     fit_annotations_inside,
+    half_violin_box_scatter,
 )
 
 # ==================== 参数规范（按周期点） ====================
@@ -151,9 +146,7 @@ def load_obs_data(data, params, param_cols=None):
     df.columns = [str(c).strip() for c in df.columns]
     df = df.rename(columns={"longi": "lon", "lati": "lat"})
     if "lon" not in df.columns or "lat" not in df.columns:
-        raise ValueError(
-            f"缺少 lon/lat 列，现有列：{list(df.columns)[:20]}..."
-        )
+        raise ValueError(f"缺少 lon/lat 列，现有列：{list(df.columns)[:20]}...")
     if "Sta_ID" not in df.columns:
         df["Sta_ID"] = [f"S{i + 1}" for i in range(len(df))]
 
@@ -169,6 +162,7 @@ def load_obs_data(data, params, param_cols=None):
             ),
         }
     )
+    source_columns = {}
     for p in params:
         info = param_info(p)
         label = info["label"]
@@ -183,15 +177,20 @@ def load_obs_data(data, params, param_cols=None):
                 f"参数 {label}（周期 {info['T']}）找不到实测列，候选：{cands}"
             )
         out[label] = pd.to_numeric(df[col], errors="coerce")
-    return out.dropna(subset=["lon", "lat"]).reset_index(drop=True)
+        if info["kind"] == "gmm":
+            out[label] = out[label].where(out[label] > 0)
+        source_columns[label] = col
+    out = out.dropna(subset=["lon", "lat"]).reset_index(drop=True)
+    if out.empty:
+        raise ValueError("没有经纬度有效的观测台站")
+    out.attrs["source_columns"] = source_columns
+    return out
 
 
 # ==================== 预测 / 椭圆距 / 残差 ====================
 
 
-def _predict_one(
-    param, lon, lat, strike, region, Ms, sta_lon, sta_lat, extent
-):
+def _predict_one(param, lon, lat, strike, region, Ms, sta_lon, sta_lat, extent):
     """用 CEA2019 预测单个参数在台站（或网格点）处的值"""
     info = param_info(param)
     if info["kind"] == "gmm":
@@ -231,9 +230,7 @@ def _a_eq(param, pred, region, Ms, preds):
 def _residual(pred, obs, kind):
     """残差 = 预测 - 实测：PGA/PGV/PSA 用 ln(Pred/Obs)；烈度用线性差"""
     if kind == "gmm":
-        return np.log(
-            np.asarray(pred, dtype=float) / np.asarray(obs, dtype=float)
-        )
+        return np.log(np.asarray(pred, dtype=float) / np.asarray(obs, dtype=float))
     return np.asarray(pred, dtype=float) - np.asarray(obs, dtype=float)
 
 
@@ -279,26 +276,30 @@ def _compute_vs_obs(
     strike = strike % 360.0
     rc = _region_core(region)
 
-    preds = {
-        infos[p]["label"]: _predict_one(
-            p,
-            lon0,
-            lat0,
-            strike,
-            region,
-            Ms,
-            obs["lon"].values,
-            obs["lat"].values,
-            extent,
-        )
-        for p in params
-    }
-    aeqs = {
-        infos[p]["label"]: _a_eq(
-            p, preds[infos[p]["label"]], region, Ms, preds
-        )
-        for p in params
-    }
+    periods = [infos[p]["T"] for p in params if infos[p]["kind"] == "gmm"]
+    if any(infos[p]["kind"] == "intensity" for p in params):
+        periods.extend([-1.0, -2.0])
+    periods = list(dict.fromkeys(periods))
+    field = CEA2019EllipseField(region, Ms, extent=extent)
+    raw = field.predict(
+        periods,
+        lon0,
+        lat0,
+        strike,
+        obs["lon"].values,
+        obs["lat"].values,
+    )
+    preds, aeqs = {}, {}
+    for p in params:
+        info = infos[p]
+        label = info["label"]
+        if info["kind"] == "gmm":
+            pred, a_eq, b_eq = raw[float(info["T"])]
+        else:
+            pred = CAL_INT.cal_Intensity_matrix(raw[-1.0][0], raw[-2.0][0])
+            a_eq, b_eq = raw[-1.0][1], raw[-1.0][2]
+        preds[label] = pred
+        aeqs[label] = (a_eq, b_eq)
     ress = {
         infos[p]["label"]: _residual(
             preds[infos[p]["label"]],
@@ -319,6 +320,8 @@ def _compute_vs_obs(
         "lat0": lat0,
         "strike": strike,
         "rc": rc,
+        "field": field,
+        "source_columns": obs.attrs.get("source_columns", {}),
     }
 
 
@@ -351,12 +354,15 @@ def plot_cea2019_vs_obs(
     """
     if axis not in ("长轴", "短轴"):
         raise ValueError("axis 只能是 '长轴' 或 '短轴'")
+    if (fault_lon_mat is None) != (fault_lat_mat is None):
+        raise ValueError("fault_lon_mat 与 fault_lat_mat 必须同时提供或同时省略")
     C = _compute_vs_obs(
         data, macro_epicenter, Ms, region, strike, params, extent, param_cols
     )
-    params, infos, labels = C["params"], C["infos"], C["labels"]
+    params, infos = C["params"], C["infos"]
     obs, preds, aeqs, ress = C["obs"], C["preds"], C["aeqs"], C["ress"]
     lon0, lat0, strike, rc = C["lon0"], C["lat0"], C["strike"], C["rc"]
+    field = C["field"]
 
     # 台站标记：区分 EI（烈度计，三角）/ HN（强震仪，圆）
     itype = obs["Instrument_Type"].str.upper().values
@@ -375,6 +381,38 @@ def plot_cea2019_vs_obs(
         axes = axes.reshape(4, 1)
     utm_zone = int((lon0 + 180.0) // 6.0) + 1
 
+    # 所有参数共用同一个绘图网格；周期场只计算一次并在各列复用。
+    c_lon = (obs["lon"].min() + obs["lon"].max()) / 2.0
+    c_lat = (obs["lat"].min() + obs["lat"].max()) / 2.0
+    clon_km = 111.32 * math.cos(math.radians(c_lat))
+    half_km = (
+        max(
+            (obs["lon"].max() - obs["lon"].min()) * clon_km,
+            (obs["lat"].max() - obs["lat"].min()) * 110.57,
+        )
+        / 2.0
+        * 1.25
+    )
+    half_km = max(half_km, 40.0)
+    glon = np.linspace(c_lon - half_km / clon_km, c_lon + half_km / clon_km, grid_n)
+    glat = np.linspace(c_lat - half_km / 110.57, c_lat + half_km / 110.57, grid_n)
+    GLON, GLAT = np.meshgrid(glon, glat)
+    grid_periods = [infos[p]["T"] for p in params if infos[p]["kind"] == "gmm"]
+    if any(infos[p]["kind"] == "intensity" for p in params):
+        grid_periods.extend([-1.0, -2.0])
+    grid_periods = list(dict.fromkeys(grid_periods))
+    grid_raw = field.predict(
+        grid_periods, lon0, lat0, strike, GLON.ravel(), GLAT.ravel()
+    )
+    grid_values = {}
+    for p in params:
+        info = infos[p]
+        if info["kind"] == "gmm":
+            values = grid_raw[float(info["T"])][0]
+        else:
+            values = CAL_INT.cal_Intensity_matrix(grid_raw[-1.0][0], grid_raw[-2.0][0])
+        grid_values[info["label"]] = values.reshape(GLON.shape)
+
     for i, p in enumerate(params):
         info = infos[p]
         label, kind, T = info["label"], info["kind"], info["T"]
@@ -388,36 +426,7 @@ def plot_cea2019_vs_obs(
 
         # ================= 排1：预测云图 + 实测散点 =================
         ax = axes[0, i]
-        c_lon = (obs["lon"].min() + obs["lon"].max()) / 2.0
-        c_lat = (obs["lat"].min() + obs["lat"].max()) / 2.0
-        clon_km = 111.32 * math.cos(math.radians(c_lat))
-        half_km = (
-            max(
-                (obs["lon"].max() - obs["lon"].min()) * clon_km,
-                (obs["lat"].max() - obs["lat"].min()) * 110.57,
-            )
-            / 2.0
-            * 1.25
-        )
-        half_km = max(half_km, 40.0)
-        glon = np.linspace(
-            c_lon - half_km / clon_km, c_lon + half_km / clon_km, grid_n
-        )
-        glat = np.linspace(
-            c_lat - half_km / 110.57, c_lat + half_km / 110.57, grid_n
-        )
-        GLON, GLAT = np.meshgrid(glon, glat)
-        pred_grid = _predict_one(
-            p,
-            lon0,
-            lat0,
-            strike,
-            region,
-            Ms,
-            GLON.ravel(),
-            GLAT.ravel(),
-            extent,
-        ).reshape(GLON.shape)
+        pred_grid = grid_values[label]
         cf = ax.contourf(
             GLON,
             GLAT,
@@ -427,9 +436,7 @@ def plot_cea2019_vs_obs(
             norm=norm,
             extend="both",
         )
-        cb = fig.colorbar(
-            cf, ax=ax, ticks=tick_positions, pad=0.03, shrink=0.85
-        )
+        cb = fig.colorbar(cf, ax=ax, ticks=tick_positions, pad=0.03, shrink=0.85)
         cb.ax.set_yticklabels(tick_labels)
         cb.set_label(title, fontsize=8)
 
@@ -445,9 +452,7 @@ def plot_cea2019_vs_obs(
             )
             ax.fill(poly_lon, poly_lat, color="0.85", alpha=0.55, zorder=2)
 
-            ax.plot(
-                flon[0], flat[0], color="r", lw=2.5, zorder=3, label="断层上缘"
-            )
+            ax.plot(flon[0], flat[0], color="r", lw=2.5, zorder=3, label="断层上缘")
             ax.plot(
                 flon[-1],
                 flat[-1],
@@ -513,7 +518,7 @@ def plot_cea2019_vs_obs(
             "",
             xy=(arr_lon, arr_lat),
             xytext=(lon0, lat0),
-            arrowprops=dict(arrowstyle="->", color="k", lw=1.1),
+            arrowprops={"arrowstyle": "->", "color": "k", "lw": 1.1},
         )
         ax.set_xlim(glon[0], glon[-1])
         ax.set_ylim(glat[0], glat[-1])
@@ -544,9 +549,7 @@ def plot_cea2019_vs_obs(
         ax.axvspan(max_dist, a_max, color="lightgray", alpha=0.55, zorder=0)
         ax.axvline(max_dist, color="0.4", ls=":", lw=1.0, zorder=1)
         ax.plot(r_scan, lm, color="tab:red", lw=1.5, label=f"{axis}中值")
-        ax.fill_between(
-            r_scan, ll, lu, color="tab:red", alpha=0.15, label=f"{axis}±1σ"
-        )
+        ax.fill_between(r_scan, ll, lu, color="tab:red", alpha=0.15, label=f"{axis}±1σ")
         ax.set_xscale("log")
         if kind == "gmm":
             ax.set_yscale("log")
@@ -585,9 +588,7 @@ def plot_cea2019_vs_obs(
         # ================= 排3：残差（线性距离轴）=================
         ax = axes[2, i]
         far3 = float(np.nanmax(dist[valid])) if valid.any() else 0.0
-        x_max3 = max(
-            200.0, math.ceil(far3 / 50.0) * 50.0
-        )  # 取整到50的倍数，最小200
+        x_max3 = max(200.0, math.ceil(far3 / 50.0) * 50.0)  # 取整到50的倍数，最小200
         ax.axvspan(max_dist, x_max3, color="lightgray", alpha=0.55, zorder=0)
         ax.axvline(max_dist, color="0.4", ls=":", lw=1.0, zorder=1)
         ax.axhline(0, color="k", lw=1.0, zorder=2)
@@ -644,9 +645,7 @@ def plot_cea2019_vs_obs(
         colors_g = ["#1f77b4", "#2ca02c", "#d62728"]
         ax.axhline(0, color="k", lw=1.0, zorder=0)  # 零线放底层
         for xpos, (_, gdata), gcol in zip(range(3), groups, colors_g):
-            half_violin_box_scatter(
-                ax, gdata, xpos, gcol, value_fmt="{:.3f}", s=18
-            )
+            half_violin_box_scatter(ax, gdata, xpos, gcol, value_fmt="{:.3f}", s=18)
         if kind == "gmm":
             ax.axhline(sigma_ln, color="r", lw=1.3, ls="-.")
             ax.axhline(-sigma_ln, color="r", lw=1.3, ls="-.")
@@ -658,12 +657,9 @@ def plot_cea2019_vs_obs(
         ax.grid(True, axis="y", linestyle="--", alpha=0.3)
 
     # 排4注释自适应：把 N/μ/m 文本框收进各自子图
-    try:
-        fig.canvas.draw()
-        for i in range(n):
-            fit_annotations_inside(axes[3, i], fig=fig, draw=False)
-    except Exception:
-        pass
+    fig.canvas.draw()
+    for i in range(n):
+        fit_annotations_inside(axes[3, i], fig=fig, draw=False)
 
     title_parts = [
         "CEA2019 预测 vs 实测",

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 GB18306 预测 vs 实测 —— 基于给定宏观震中的 4×N 综合绘图与统计表
 ================================================================
@@ -44,34 +43,29 @@ import math
 import os
 import sys
 
+import matplotlib
 import numpy as np
 import pandas as pd
-import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.colors import BoundaryNorm, ListedColormap
 
-try:
-    sys.stdout.reconfigure(encoding="utf-8")
-except Exception:
-    pass
-
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
-from GB18306_class import GB18306_2015_IntensityCal, GB18306_2015_PGA_PGV_GMMs
 from CEA2019_pre import (
-    USGS_MMI_COLORS,
     PGA_LEVELS,
     PGV_LEVELS,
+    USGS_MMI_COLORS,
     fmt_pgv,
     km_to_lonlat,
 )
+from ellipse_fields import GB18306EllipseField as SharedGB18306EllipseField
 from stat_violin import (
     apply_style,
-    half_violin_box_scatter,
     fit_annotations_inside,
+    half_violin_box_scatter,
 )
 
 SIGMA_GB18306 = {"pga": 0.236, "pgv": 0.271}
@@ -99,9 +93,7 @@ def normalize_params(params):
             elif s == "PGV":
                 item = -2.0
             else:
-                raise ValueError(
-                    f"GB18306 不支持参数 {p!r}，仅支持 PGA/PGV/Intensity"
-                )
+                raise ValueError(f"GB18306 不支持参数 {p!r}，仅支持 PGA/PGV/Intensity")
         else:
             t = float(p)
             if t in (-1.0, 0.0):
@@ -154,9 +146,7 @@ def load_obs_data(data, params, param_cols=None):
     df.columns = [str(c).strip() for c in df.columns]
     df = df.rename(columns={"longi": "lon", "lati": "lat"})
     if "lon" not in df.columns or "lat" not in df.columns:
-        raise ValueError(
-            f"缺少 lon/lat 列，现有列：{list(df.columns)[:20]}..."
-        )
+        raise ValueError(f"缺少 lon/lat 列，现有列：{list(df.columns)[:20]}...")
     if "Sta_ID" not in df.columns:
         df["Sta_ID"] = [f"S{i + 1}" for i in range(len(df))]
 
@@ -172,6 +162,7 @@ def load_obs_data(data, params, param_cols=None):
             ),
         }
     )
+    source_columns = {}
     for p in params:
         info = param_info(p)
         label = info["label"]
@@ -184,190 +175,17 @@ def load_obs_data(data, params, param_cols=None):
         if col is None:
             raise ValueError(f"参数 {label} 找不到实测列，候选：{cands}")
         out[label] = pd.to_numeric(df[col], errors="coerce")
-    return out.dropna(subset=["lon", "lat"]).reset_index(drop=True)
+        if info["kind"] == "gmm":
+            out[label] = out[label].where(out[label] > 0)
+        source_columns[label] = col
+    out = out.dropna(subset=["lon", "lat"]).reset_index(drop=True)
+    if out.empty:
+        raise ValueError("没有经纬度有效的观测台站")
+    out.attrs["source_columns"] = source_columns
+    return out
 
 
-# ==================== GB18306 椭圆场前向模型（向量化） ====================
-
-
-class GB18306EllipseField:
-    """
-    GB18306 椭圆场：台站相对长轴夹角 θ，在椭圆族 (a(V), b(V)) 上二分求预测值。
-    predict_many(lon, lat, strike, sta_lon, sta_lat) → (I, PGA, PGV, aI, bI, aA, bA, aV, bV)
-    """
-
-    def __init__(self, region: str, Ms: float, extent: float = 400.0):
-        self.region = region
-        self.Ms = float(Ms)
-        self.extent = float(extent)
-        self.cal_i = GB18306_2015_IntensityCal()
-        self.cal_g = GB18306_2015_PGA_PGV_GMMs()
-        self.cal_i._validate_input(region, "长轴")
-        self.cal_g._validate_input(region, "长轴")
-
-        self.IL = self.cal_i._PARAMS[(region, "长轴")]
-        self.IS = self.cal_i._PARAMS[(region, "短轴")]
-        self.sigma_I = self.IL[4]
-
-        self.gp = {}
-        for pt in ("aE", "vE"):
-            self.gp[pt] = {
-                "long": self.cal_g._get_params(self.Ms, region, "长轴", pt),
-                "short": self.cal_g._get_params(self.Ms, region, "短轴", pt),
-            }
-        self.I_lo = (
-            self.IL[0]
-            + self.IL[1] * self.Ms
-            + self.IL[2] * math.log10(self.extent + self.IL[3])
-        )
-        self.I_hi = (
-            self.IL[0]
-            + self.IL[1] * self.Ms
-            + self.IL[2] * math.log10(self.IL[3])
-        )
-        self.lgV = {}
-        for pt in ("aE", "vE"):
-            pl = self.gp[pt]["long"]
-            exp_term = pl["D"] * math.exp(pl["E"] * self.Ms)
-            self.lgV[pt] = {
-                "lo": pl["A"]
-                + pl["B"] * self.Ms
-                + pl["C"] * math.log10(self.extent + exp_term),
-                "hi": pl["A"]
-                + pl["B"] * self.Ms
-                + pl["C"] * math.log10(exp_term),
-            }
-
-    def _ab_intensity(self, I):
-        A, B, C, R0 = self.IL[:4]
-        a = 10.0 ** ((I - A - B * self.Ms) / C) - R0
-        As, Bs, Cs, R0s = self.IS[:4]
-        b = 10.0 ** ((I - As - Bs * self.Ms) / Cs) - R0s
-        a = np.maximum(a, 1e-3)
-        b = np.maximum(np.minimum(b, a), 1e-3)
-        return a, b
-
-    def _ab_value(self, V, pt):
-        lg = np.log10(np.maximum(V, 1e-12))
-        pl, ps = self.gp[pt]["long"], self.gp[pt]["short"]
-        M = self.Ms
-        a = 10.0 ** ((lg - pl["A"] - pl["B"] * M) / pl["C"]) - pl[
-            "D"
-        ] * math.exp(pl["E"] * M)
-        b = 10.0 ** ((lg - ps["A"] - ps["B"] * M) / ps["C"]) - ps[
-            "D"
-        ] * math.exp(ps["E"] * M)
-        a = np.maximum(a, 1e-3)
-        b = np.maximum(np.minimum(b, a), 1e-3)
-        return a, b
-
-    @staticmethod
-    def _bisect(R, ct, st, ab_func, lo, hi, iters=60):
-        lo = np.full_like(R, lo)
-        hi = np.full_like(R, hi)
-        for _ in range(iters):
-            mid = (lo + hi) / 2.0
-            a, b = ab_func(mid)
-            f = (R * ct / a) ** 2 + (R * st / b) ** 2 - 1.0
-            lo = np.where(f < 0.0, mid, lo)
-            hi = np.where(f >= 0.0, mid, hi)
-        return (lo + hi) / 2.0
-
-    def _bisect_lgV(self, R, ct, st, pt, iters=60):
-        lo = np.full_like(R, self.lgV[pt]["lo"])
-        hi = np.full_like(R, self.lgV[pt]["hi"])
-        for _ in range(iters):
-            mid = (lo + hi) / 2.0
-            a, b = self._ab_value(10.0**mid, pt)
-            f = (R * ct / a) ** 2 + (R * st / b) ** 2 - 1.0
-            lo = np.where(f < 0.0, mid, lo)
-            hi = np.where(f >= 0.0, mid, hi)
-        return 10.0 ** ((lo + hi) / 2.0)
-
-    def predict_many(self, lon, lat, strike, sta_lon, sta_lat):
-        from pyproj import Transformer
-
-        lon = np.asarray(lon, dtype=float).ravel()
-        lat = np.asarray(lat, dtype=float).ravel()
-        sta_lon = np.asarray(sta_lon, dtype=float).ravel()
-        sta_lat = np.asarray(sta_lat, dtype=float).ravel()
-        n_cand, n_sta = lon.size, sta_lon.size
-        I_out = np.full((n_cand, n_sta), np.nan)
-        A_out = np.full((n_cand, n_sta), np.nan)
-        V_out = np.full((n_cand, n_sta), np.nan)
-        aI_out = np.full((n_cand, n_sta), np.nan)
-        bI_out = np.full((n_cand, n_sta), np.nan)
-        aA_out = np.full((n_cand, n_sta), np.nan)
-        bA_out = np.full((n_cand, n_sta), np.nan)
-        aV_out = np.full((n_cand, n_sta), np.nan)
-        bV_out = np.full((n_cand, n_sta), np.nan)
-
-        groups = {}
-        for i in range(n_cand):
-            zone = int((lon[i] + 180.0) // 6.0) + 1
-            hemi = 326 if lat[i] >= 0 else 327
-            groups.setdefault((hemi, zone), []).append(i)
-        for (hemi, zone), idx in groups.items():
-            fwd = Transformer.from_crs(
-                "epsg:4326", f"epsg:{hemi}{zone:02d}", always_xy=True
-            )
-            ex, ey = np.asarray(fwd.transform(lon[idx], lat[idx]), dtype=float)
-            sx, sy = np.asarray(fwd.transform(sta_lon, sta_lat), dtype=float)
-            dx = (sx[None, :] - ex[:, None]) / 1000.0
-            dy = (sy[None, :] - ey[:, None]) / 1000.0
-            R = np.hypot(dx, dy)
-            theta = np.arctan2(dy, dx) - math.radians(90.0 - strike)
-            ct, st = np.cos(theta), np.sin(theta)
-
-            a0, b0 = self._ab_intensity(self.I_lo)
-            r_outer = (
-                float(a0)
-                * float(b0)
-                / np.sqrt((float(b0) * ct) ** 2 + (float(a0) * st) ** 2)
-            )
-            inside = R <= r_outer
-            Ii = self._bisect(
-                R, ct, st, self._ab_intensity, self.I_lo, self.I_hi
-            )
-            aI, bI = self._ab_intensity(Ii)
-            I_out[idx, :] = np.where(inside, Ii, np.nan)
-            aI_out[idx, :] = np.where(inside, aI, np.nan)
-            bI_out[idx, :] = np.where(inside, bI, np.nan)
-
-            for pt, out in (("aE", A_out), ("vE", V_out)):
-                a0v, b0v = self._ab_value(10.0 ** self.lgV[pt]["lo"], pt)
-                r_outer_v = (
-                    float(a0v)
-                    * float(b0v)
-                    / np.sqrt((float(b0v) * ct) ** 2 + (float(a0v) * st) ** 2)
-                )
-                inside_v = R <= r_outer_v
-                Vi = self._bisect_lgV(R, ct, st, pt)
-                aV, bV = self._ab_value(Vi, pt)
-                out[idx, :] = np.where(inside_v, Vi, np.nan)
-                if pt == "aE":
-                    aA_out[idx, :] = np.where(inside_v, aV, np.nan)
-                    bA_out[idx, :] = np.where(inside_v, bV, np.nan)
-                else:
-                    aV_out[idx, :] = np.where(inside_v, aV, np.nan)
-                    bV_out[idx, :] = np.where(inside_v, bV, np.nan)
-        return (
-            I_out,
-            A_out,
-            V_out,
-            aI_out,
-            bI_out,
-            aA_out,
-            bA_out,
-            aV_out,
-            bV_out,
-        )
-
-    def predict(self, lon, lat, strike, sta_lon, sta_lat):
-        out = self.predict_many(
-            np.atleast_1d(lon), np.atleast_1d(lat), strike, sta_lon, sta_lat
-        )
-        return tuple(o[0] for o in out)
+# 椭圆场前向模型统一由 ellipse_fields.GB18306EllipseField 提供。
 
 
 # ==================== 预测 / 椭圆距 / 残差 / 色标 ====================
@@ -375,9 +193,7 @@ class GB18306EllipseField:
 
 def predict_one(param, field, lon, lat, strike, sta_lon, sta_lat):
     """GB18306 单参数预测，返回 (预测值, 长轴距, 短轴距)"""
-    I, A, V, aI, bI, aA, bA, aV, bV = field.predict(
-        lon, lat, strike, sta_lon, sta_lat
-    )
+    I, A, V, aI, bI, aA, bA, aV, bV = field.predict(lon, lat, strike, sta_lon, sta_lat)
     if param == "Intensity":
         return I, aI, bI
     if float(param) == -1:
@@ -388,9 +204,7 @@ def predict_one(param, field, lon, lat, strike, sta_lon, sta_lat):
 def residual(pred, obs, kind):
     """残差 = 预测 - 实测：PGA/PGV 用 ln(Pred/Obs)，烈度用线性差"""
     if kind == "gmm":
-        return np.log(
-            np.asarray(pred, dtype=float) / np.asarray(obs, dtype=float)
-        )
+        return np.log(np.asarray(pred, dtype=float) / np.asarray(obs, dtype=float))
     return np.asarray(pred, dtype=float) - np.asarray(obs, dtype=float)
 
 
@@ -417,32 +231,27 @@ def compute_vs_obs(
     """返回 观测/预测/椭圆距/残差 等全部结果（绘图与 txt 共用）"""
     params = normalize_params(params)
     if not params:
-        raise ValueError(
-            "params 不能为空；支持 -1/0(PGA)、-2(PGV)、'Intensity'"
-        )
+        raise ValueError("params 不能为空；支持 -1/0(PGA)、-2(PGV)、'Intensity'")
     infos = {p: param_info(p) for p in params}
     obs = load_obs_data(data, params, param_cols=param_cols)
     lon0, lat0 = float(epicenter[0]), float(epicenter[1])
     strike = strike % 360.0
-    field = GB18306EllipseField(region, Ms, extent=extent)
+    # Pre、观测对比和震中反演统一使用同一解析椭圆场。
+    field = SharedGB18306EllipseField(region, Ms, extent=extent)
 
+    raw = field.predict(lon0, lat0, strike, obs["lon"].values, obs["lat"].values)
+    raw_by_label = {
+        "烈度": (raw[0], raw[3], raw[4]),
+        "PGA": (raw[1], raw[5], raw[6]),
+        "PGV": (raw[2], raw[7], raw[8]),
+    }
     preds, aeqs, ress = {}, {}, {}
     for p in params:
         info = infos[p]
-        val, a, b = predict_one(
-            p,
-            field,
-            lon0,
-            lat0,
-            strike,
-            obs["lon"].values,
-            obs["lat"].values,
-        )
+        val, a, b = raw_by_label[info["label"]]
         preds[info["label"]] = val
         aeqs[info["label"]] = (a, b)
-        ress[info["label"]] = residual(
-            val, obs[info["label"]].values, info["kind"]
-        )
+        ress[info["label"]] = residual(val, obs[info["label"]].values, info["kind"])
     return {
         "params": params,
         "infos": infos,
@@ -455,6 +264,7 @@ def compute_vs_obs(
         "lat0": lat0,
         "strike": strike,
         "field": field,
+        "source_columns": obs.attrs.get("source_columns", {}),
     }
 
 
@@ -488,10 +298,12 @@ def plot_gb18306_vs_obs(
     """
     if axis not in ("长轴", "短轴"):
         raise ValueError("axis 只能是 '长轴' 或 '短轴'")
+    if (fault_lon_mat is None) != (fault_lat_mat is None):
+        raise ValueError("fault_lon_mat 与 fault_lat_mat 必须同时提供或同时省略")
     C = compute_vs_obs(
         data, macro_epicenter, Ms, region, strike, params, extent, param_cols
     )
-    params, infos, labels = C["params"], C["infos"], C["labels"]
+    params, infos = C["params"], C["infos"]
     obs, preds, aeqs, ress = C["obs"], C["preds"], C["aeqs"], C["ress"]
     lon0, lat0, strike, field = C["lon0"], C["lat0"], C["strike"], C["field"]
 
@@ -510,6 +322,29 @@ def plot_gb18306_vs_obs(
         axes = axes.reshape(4, 1)
     utm_zone = int((lon0 + 180.0) // 6.0) + 1
 
+    # 所有参数共用同一个绘图网格，GB 解析场一次同时返回 I/PGA/PGV。
+    c_lon = (obs["lon"].min() + obs["lon"].max()) / 2.0
+    c_lat = (obs["lat"].min() + obs["lat"].max()) / 2.0
+    clon_km = 111.32 * math.cos(math.radians(c_lat))
+    half_km = (
+        max(
+            (obs["lon"].max() - obs["lon"].min()) * clon_km,
+            (obs["lat"].max() - obs["lat"].min()) * 110.57,
+        )
+        / 2.0
+        * 1.25
+    )
+    half_km = max(half_km, 40.0)
+    glon = np.linspace(c_lon - half_km / clon_km, c_lon + half_km / clon_km, grid_n)
+    glat = np.linspace(c_lat - half_km / 110.57, c_lat + half_km / 110.57, grid_n)
+    GLON, GLAT = np.meshgrid(glon, glat)
+    grid_raw = field.predict(lon0, lat0, strike, GLON.ravel(), GLAT.ravel())
+    grid_values = {
+        "烈度": grid_raw[0].reshape(GLON.shape),
+        "PGA": grid_raw[1].reshape(GLON.shape),
+        "PGV": grid_raw[2].reshape(GLON.shape),
+    }
+
     for i, p in enumerate(params):
         info = infos[p]
         label, kind, T = info["label"], info["kind"], info["T"]
@@ -523,28 +358,7 @@ def plot_gb18306_vs_obs(
 
         # ================= 排1：预测云图 + 实测散点 + 断层投影 =================
         ax = axes[0, i]
-        c_lon = (obs["lon"].min() + obs["lon"].max()) / 2.0
-        c_lat = (obs["lat"].min() + obs["lat"].max()) / 2.0
-        clon_km = 111.32 * math.cos(math.radians(c_lat))
-        half_km = (
-            max(
-                (obs["lon"].max() - obs["lon"].min()) * clon_km,
-                (obs["lat"].max() - obs["lat"].min()) * 110.57,
-            )
-            / 2.0
-            * 1.25
-        )
-        half_km = max(half_km, 40.0)
-        glon = np.linspace(
-            c_lon - half_km / clon_km, c_lon + half_km / clon_km, grid_n
-        )
-        glat = np.linspace(
-            c_lat - half_km / 110.57, c_lat + half_km / 110.57, grid_n
-        )
-        GLON, GLAT = np.meshgrid(glon, glat)
-        pred_grid = predict_one(
-            p, field, lon0, lat0, strike, GLON.ravel(), GLAT.ravel()
-        )[0].reshape(GLON.shape)
+        pred_grid = grid_values[label]
         cf = ax.contourf(
             GLON,
             GLAT,
@@ -554,9 +368,7 @@ def plot_gb18306_vs_obs(
             norm=norm,
             extend="both",
         )
-        cb = fig.colorbar(
-            cf, ax=ax, ticks=tick_positions, pad=0.03, shrink=0.85
-        )
+        cb = fig.colorbar(cf, ax=ax, ticks=tick_positions, pad=0.03, shrink=0.85)
         cb.ax.set_yticklabels(tick_labels)
         cb.set_label(title, fontsize=8)
 
@@ -571,9 +383,7 @@ def plot_gb18306_vs_obs(
                 [flat[0], flat[:, -1], flat[-1][::-1], flat[:, 0][::-1]]
             )
             ax.fill(poly_lon, poly_lat, color="0.85", alpha=0.55, zorder=2)
-            ax.plot(
-                flon[0], flat[0], color="r", lw=2.5, zorder=3, label="断层上缘"
-            )
+            ax.plot(flon[0], flat[0], color="r", lw=2.5, zorder=3, label="断层上缘")
             ax.plot(
                 flon[-1],
                 flat[-1],
@@ -640,7 +450,7 @@ def plot_gb18306_vs_obs(
             "",
             xy=(arr_lon, arr_lat),
             xytext=(lon0, lat0),
-            arrowprops=dict(arrowstyle="->", color="k", lw=1.1),
+            arrowprops={"arrowstyle": "->", "color": "k", "lw": 1.1},
         )
         ax.set_xlim(glon[0], glon[-1])
         ax.set_ylim(glat[0], glat[-1])
@@ -658,18 +468,12 @@ def plot_gb18306_vs_obs(
         a_max = max(200.0, math.ceil(far / 100.0) * 100.0 + 100.0)
         r_scan = np.arange(1.0, a_max + 1.0, 1.0)
         if kind == "intensity":
-            arr = [
-                field.cal_i.calculate(Ms, float(r), region, axis)
-                for r in r_scan
-            ]
+            arr = [field.cal_i.calculate(Ms, float(r), region, axis) for r in r_scan]
             lm = np.array([d["mean"] for d in arr])
             ll = np.array([d["lower_1sigma"] for d in arr])
             lu = np.array([d["upper_1sigma"] for d in arr])
         else:
-            gmm = [
-                field.cal_g.calculate(Ms, float(r), region, axis)
-                for r in r_scan
-            ]
+            gmm = [field.cal_g.calculate(Ms, float(r), region, axis) for r in r_scan]
             tup = [g[0 if T == -1 else 1] for g in gmm]
             lm = np.array([t[0] for t in tup])
             ll = np.array([t[1] for t in tup])
@@ -678,9 +482,7 @@ def plot_gb18306_vs_obs(
         ax.axvspan(max_dist, a_max, color="lightgray", alpha=0.55, zorder=0)
         ax.axvline(max_dist, color="0.4", ls=":", lw=1.0, zorder=1)
         ax.plot(r_scan, lm, color="tab:red", lw=1.5, label=f"{axis}中值")
-        ax.fill_between(
-            r_scan, ll, lu, color="tab:red", alpha=0.15, label=f"{axis}±1σ"
-        )
+        ax.fill_between(r_scan, ll, lu, color="tab:red", alpha=0.15, label=f"{axis}±1σ")
         ax.set_xscale("log")
         if kind == "gmm":
             ax.set_yscale("log")
@@ -724,9 +526,7 @@ def plot_gb18306_vs_obs(
         ax.axvline(max_dist, color="0.4", ls=":", lw=1.0, zorder=1)
         ax.axhline(0, color="k", lw=1.0, zorder=2)
         if kind == "gmm":
-            sigma_ln = SIGMA_GB18306["pga" if T == -1 else "pgv"] * math.log(
-                10.0
-            )
+            sigma_ln = SIGMA_GB18306["pga" if T == -1 else "pgv"] * math.log(10.0)
             ax.axhline(sigma_ln, color="r", lw=1.3, ls="-.")
             ax.axhline(
                 -sigma_ln,
@@ -778,9 +578,7 @@ def plot_gb18306_vs_obs(
         colors_g = ["#1f77b4", "#2ca02c", "#d62728"]
         ax.axhline(0, color="k", lw=1.0, zorder=0)  # 零线放底层
         for xpos, (_, gdata), gcol in zip(range(3), groups, colors_g):
-            half_violin_box_scatter(
-                ax, gdata, xpos, gcol, value_fmt="{:.3f}", s=18
-            )
+            half_violin_box_scatter(ax, gdata, xpos, gcol, value_fmt="{:.3f}", s=18)
         if kind == "gmm":
             ax.axhline(sigma_ln, color="r", lw=1.3, ls="-.")
             ax.axhline(-sigma_ln, color="r", lw=1.3, ls="-.")
@@ -792,12 +590,9 @@ def plot_gb18306_vs_obs(
         ax.grid(True, axis="y", linestyle="--", alpha=0.3)
 
     # 排4注释自适应：N/μ/m 文本框收进子图
-    try:
-        fig.canvas.draw()
-        for i in range(n):
-            fit_annotations_inside(axes[3, i], fig=fig, draw=False)
-    except Exception:
-        pass
+    fig.canvas.draw()
+    for i in range(n):
+        fit_annotations_inside(axes[3, i], fig=fig, draw=False)
 
     title_parts = [
         "GB18306 预测 vs 实测",
