@@ -640,7 +640,8 @@ def prepare_site_plot_observations(
     Raises
     ------
     ValueError
-        ``plot_observations`` 不是 ``"corrected"`` 或 ``"raw"``。
+        ``plot_observations`` 不是 ``"corrected"``/``"raw"``，或输入表不是
+        ``correct_observations_to_reference_vs30`` 生成的场地修正数据。
     """
     mode = str(plot_observations).strip().lower()
     if mode not in {"corrected", "raw"}:
@@ -651,17 +652,22 @@ def prepare_site_plot_observations(
 
     plot_data = corrected_data.copy()
     plot_data.attrs = dict(corrected_data.attrs)
+    raw_columns = [
+        col
+        for col in plot_data.columns
+        if col.endswith("_raw") and col[: -len("_raw")] in plot_data.columns
+    ]
+    if "site_reference_vs30" not in plot_data.attrs or not raw_columns:
+        raise ValueError(
+            "plot_observations 需要 correct_observations_to_reference_vs30 "
+            "返回的 DataFrame（必须包含场地修正 attrs 和 *_raw 审计列）"
+        )
     plot_data.attrs["site_plot_observations"] = mode
     if mode == "corrected":
         return plot_data
 
     # 每个被修正的观测列都有一个紧邻保存的 ``列名_raw``。这里只恢复原列，
     # 保留审计列，便于调用者在绘图后继续追溯数值来源。
-    raw_columns = [
-        col
-        for col in plot_data.columns
-        if col.endswith("_raw") and col[: -len("_raw")] in plot_data.columns
-    ]
     for raw_col in raw_columns:
         original_col = raw_col[: -len("_raw")]
         plot_data[original_col] = plot_data[raw_col]
