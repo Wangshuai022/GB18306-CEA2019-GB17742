@@ -123,20 +123,45 @@ def param_info(p):
 
 
 def obs_col_candidates(info):
-    """实测列候选：EPA/EPV 优先（GB18306 的 PGA/PGV 实为 EPA/EPV），
-    没有再回退 PGA_H/PGV_H 或 PGA/PGV"""
+    """实测列候选：RotD50 → H → 有效值 RotD50 → 有效值 H。"""
     if info["kind"] == "intensity":
         return ["I"]
     if info["T"] == -1:
-        return ["EPA_H", "PGA_H", "PGA"]
-    return ["EPV_H", "PGV_H", "PGV"]
+        return ["PGA_RotD50", "PGA_H", "EPA_RotD50", "EPA_H"]
+    return ["PGV_RotD50", "PGV_H", "EPV_RotD50", "EPV_H"]
 
 
 # ==================== 数据读取 ====================
 
 
 def load_obs_data(data, params, param_cols=None):
-    """读取实测数据（路径或 DataFrame）→ Sta_ID/lon/lat/Instrument_Type/各参数实测列"""
+    """读取并规范化 GB18306 预测—观测对比所需的台站数据。
+
+    Parameters
+    ----------
+    data : str, os.PathLike or pandas.DataFrame
+        制表符分隔文件路径或内存数据表。经纬度列可命名为 ``longi/lati``
+        或 ``lon/lat``；``Sta_ID`` 和 ``Instrument_Type`` 可省略。
+    params : sequence
+        规范参数列表：-1=PGA、-2=PGV、``"Intensity"``=烈度。
+    param_cols : dict or None
+        可选显式列映射，例如 ``{"PGA": "my_pga"}``。未指定时 PGA/PGV
+        严格按 RotD50、H、有效值 RotD50、有效值 H 的顺序选择。
+
+    Returns
+    -------
+    pandas.DataFrame
+        标准列 ``Sta_ID/lon/lat/Instrument_Type`` 加各参数观测列。非正
+        PGA/PGV 转为 NaN；只删除经纬度无效的行。实际采用的原始列名保存在
+        ``result.attrs["source_columns"]``。
+
+    Raises
+    ------
+    TypeError
+        ``data`` 既不是路径也不是 DataFrame。
+    ValueError
+        经纬度列或请求的观测参数列缺失，或没有有效台站坐标。
+    """
     if isinstance(data, (str, os.PathLike)):
         df = pd.read_csv(str(data), sep="\t", encoding="utf-8")
     elif isinstance(data, pd.DataFrame):
@@ -228,7 +253,35 @@ def level_ticks(info, levels):
 def compute_vs_obs(
     data, epicenter, Ms, region, strike, params, extent, param_cols=None
 ):
-    """返回 观测/预测/椭圆距/残差 等全部结果（绘图与 txt 共用）"""
+    """在指定宏观震中计算 GB18306 预测、观测、椭圆距和残差。
+
+    Parameters
+    ----------
+    data : str, os.PathLike or pandas.DataFrame
+        台站观测表，格式见 ``load_obs_data``。
+    epicenter : tuple(float, float)
+        用于前向预测的宏观震中 ``(经度, 纬度)``。
+    Ms : float
+        GB18306 衰减关系使用的面波震级。
+    region : str
+        GB18306 分区名称。
+    strike : float
+        椭圆长轴走向，单位度，函数内部归一化到 [0, 360)。
+    params : sequence
+        -1=PGA、-2=PGV、``"Intensity"``=烈度。
+    extent : float
+        椭圆衰减场最大有效距离，单位 km。
+    param_cols : dict or None
+        可选显式观测列映射。
+
+    Returns
+    -------
+    dict
+        包含规范参数 ``params``、参数元数据 ``infos``、观测表 ``obs``、
+        预测字典 ``preds``、长短轴等效距 ``aeqs``、残差 ``ress``、震中、
+        走向、共享椭圆场对象以及实际观测列名。PGA/PGV 残差为
+        ``ln(pred/obs)``，烈度残差为 ``pred-obs``。
+    """
     params = normalize_params(params)
     if not params:
         raise ValueError("params 不能为空；支持 -1/0(PGA)、-2(PGV)、'Intensity'")
@@ -288,13 +341,50 @@ def plot_gb18306_vs_obs(
     fault_lon_mat=None,
     fault_lat_mat=None,
 ):
-    """
-    基于宏观震中，用 GB18306 预测并绘制"预测 vs 实测"4×N 综合图。
+    """绘制 GB18306 的 4×N 预测—观测综合图。
 
-    macro_epicenter：宏观震中（反演/迭代得到的经纬度），必填；
-    initial_epicenter：初始破裂点（发布值），仅作标记；
-    fault_lon_mat / fault_lat_mat：断层面网格矩阵（第一行=上缘，
-        最后一行=下缘），提供时在第一排绘制断层投影。
+    Parameters
+    ----------
+    data : str, os.PathLike or pandas.DataFrame
+        台站观测。若 DataFrame attrs 标记了场地修正/原始绘图模式，图标题
+        会明确说明当前观测状态。
+    Ms : float
+        面波震级。
+    region : str
+        GB18306 分区名称。
+    strike : float
+        椭圆长轴走向，单位度。
+    macro_epicenter : tuple(float, float)
+        用于预测的宏观震中经纬度；可以是反演结果或用户指定值。
+    initial_epicenter : tuple(float, float) or None
+        初始破裂点，只用于地图标记，不影响预测。
+    params : sequence
+        绘图参数；GB18306 仅支持 PGA、PGV、烈度。
+    extent : float, default 400
+        椭圆衰减场范围，单位 km。
+    max_dist : float, default 200
+        残差图近场/远场分组阈值，单位 km。
+    outpath : str or os.PathLike
+        PNG 输出路径。
+    param_cols : dict or None
+        可选显式观测列映射。
+    grid_n : int, default 100
+        每个方向的绘图网格点数。
+    axis : {"长轴", "短轴"}, default "长轴"
+        衰减曲线横坐标使用的等效椭圆距离。
+    fault_lon_mat, fault_lat_mat : array-like or None
+        二维断层网格经纬度；第一/末行作为上下缘。必须同时提供或同时省略。
+
+    Returns
+    -------
+    str or os.PathLike
+        原样返回 ``outpath``。图的四排依次为地图、衰减曲线、残差—距离和
+        全部/近场/远场残差分布。
+
+    Raises
+    ------
+    ValueError
+        ``axis`` 非法，或断层经纬度矩阵没有成对提供。
     """
     if axis not in ("长轴", "短轴"):
         raise ValueError("axis 只能是 '长轴' 或 '短轴'")
@@ -606,6 +696,16 @@ def plot_gb18306_vs_obs(
             2,
             f"初始破裂点 ({initial_epicenter[0]:.3f}, {initial_epicenter[1]:.3f})",
         )
+    if isinstance(data, pd.DataFrame):
+        site_plot_mode = data.attrs.get("site_plot_observations")
+        if site_plot_mode == "raw":
+            title_parts.append("原始场地观测（仅绘图，反演仍使用 Vs30 修正值）")
+        elif "site_reference_vs30" in data.attrs:
+            site_model = data.attrs.get("site_correction_model", "场地模型")
+            site_vs30 = float(data.attrs["site_reference_vs30"])
+            title_parts.append(
+                f"观测已按 {site_model} 统一至 Vs30={site_vs30:g} m/s"
+            )
     fig.suptitle("  |  ".join(title_parts), fontsize=14)
     fig.tight_layout(rect=(0, 0, 1, 0.965))
     fig.savefig(outpath, dpi=200, bbox_inches="tight")
@@ -637,10 +737,27 @@ def export_gb18306_vs_obs_txt(
     outpath="GB18306_vs_Obs_stats.txt",
     param_cols=None,
 ):
-    """
-    输出 1 个大的 txt（与绘图共用同一套计算），第一行即表头：
-        台站信息 + 每个参数：<参数>_obs / <参数>_pred /
-        Repi_long_<参数>(km) / Repi_short_<参数>(km) / <参数>_res
+    """导出 GB18306 逐台站预测—观测统计表。
+
+    Parameters
+    ----------
+    data, Ms, region, strike, macro_epicenter, params, extent, param_cols
+        与 ``plot_gb18306_vs_obs`` 中同名参数含义一致。
+    max_dist : float, default 200
+        保留为与绘图接口一致的分组阈值；表中输出全部台站。
+    outpath : str or os.PathLike
+        制表符分隔文本输出路径，使用 UTF-8 BOM 编码。
+
+    Returns
+    -------
+    str or os.PathLike
+        原样返回 ``outpath``。第一行即表头：台站信息加每个参数的观测、
+        预测、长轴距、短轴距和残差五列，可用
+        ``pandas.read_csv(outpath, sep="\\t")`` 读取。
+
+    Notes
+    -----
+    PGA/PGV 残差为 ``ln(预测/实测)``；烈度残差为线性 ``预测-实测``。
     """
     C = compute_vs_obs(
         data, macro_epicenter, Ms, region, strike, params, extent, param_cols
