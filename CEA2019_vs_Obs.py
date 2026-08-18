@@ -380,6 +380,7 @@ def plot_cea2019_vs_obs(
     initial_epicenter=None,
     fault_lon_mat=None,
     fault_lat_mat=None,
+    plot_observations=None,
 ):
     """绘制 CEA2019 的 4×N 预测—观测综合图。
 
@@ -413,6 +414,10 @@ def plot_cea2019_vs_obs(
         初始破裂点，仅作地图标记。
     fault_lon_mat, fault_lat_mat : array-like or None
         二维断层网格经纬度，必须同时提供或同时省略。
+    plot_observations : {None, "corrected", "raw"}, default None
+        场地修正观测的绘图模式。None 表示原样使用 ``data``；``corrected``
+        使用参考 Vs30 观测；``raw`` 从 ``*_raw`` 审计列恢复原始场地观测。
+        仅改变图中的观测点和绘图残差，不改变任何震中反演结果。
 
     Returns
     -------
@@ -431,6 +436,15 @@ def plot_cea2019_vs_obs(
         raise ValueError(
             "fault_lon_mat 与 fault_lat_mat 必须同时提供或同时省略"
         )
+    if plot_observations is not None:
+        if not isinstance(data, pd.DataFrame):
+            raise TypeError(
+                "plot_observations 只能用于包含场地修正审计列的 pandas.DataFrame；"
+                "文件路径输入请先调用 correct_observations_to_reference_vs30"
+            )
+        from Vs30_site_correction import prepare_site_plot_observations
+
+        data = prepare_site_plot_observations(data, plot_observations)
     C = _compute_vs_obs(
         data, macro_epicenter, Ms, region, strike, params, extent, param_cols
     )
