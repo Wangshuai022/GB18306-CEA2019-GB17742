@@ -42,8 +42,24 @@ class GB17742_2020_Cal_instrument_intensity:
 
     @staticmethod
     def cal_Intensity(PGA0, PGV0):
-        """
-        单个台站：输入 PGA（gal）、PGV（cm/s），输出烈度（保留 1 位小数）
+        """把单个台站 PGA 和 PGV 换算为 GB/T 17742 仪器烈度。
+
+        Parameters
+        ----------
+        PGA0 : float
+            正峰值加速度，单位 gal（cm/s²）。
+        PGV0 : float
+            正峰值速度，单位 cm/s。
+
+        Returns
+        -------
+        float
+            限制在 1--12 度并保留一位小数的仪器烈度。
+
+        Raises
+        ------
+        ValueError
+            PGA 或 PGV 不是正有限数。
         """
         if not np.isfinite(PGA0) or PGA0 <= 0:
             raise ValueError("PGA 必须是正有限数")
@@ -69,9 +85,11 @@ class GB17742_2020_Cal_instrument_intensity:
 
     @staticmethod
     def cal_Intensity_matrix(PGA0, PGV0):
-        """
-        多个台站（数组/矩阵）：输入 PGA（gal）、PGV（cm/s），输出烈度数组
-        算法和 cal_Intensity 完全一样，只是用 numpy 一次算完，速度快
+        """向量化换算多个台站或网格点的仪器烈度。
+
+        ``PGA0``（gal）和 ``PGV0``（cm/s）可为标量、列表或形状可广播的
+        ndarray。返回与广播结果同形状的 ndarray，NaN 会原样传播；有限值必须
+        为正。算法与 ``cal_Intensity`` 完全相同。
         """
         # 转成 numpy 数组（传标量、列表、矩阵都可以）
         PGA0 = np.asarray(PGA0)
@@ -104,9 +122,17 @@ class GB17742_2020_Cal_instrument_intensity:
 
     @staticmethod
     def cal_Intensity_matrix_PGV(PGV0):
-        """
-        只有 PGV（cm/s）时用：PGV → 烈度（保留 1 位小数）
-        公式：I = 3 * log10(PGV / 100) + 9.77，范围 1~12 度
+        """仅用 PGV 分量估计仪器烈度。
+
+        Parameters
+        ----------
+        PGV0 : array-like
+            峰值速度，单位 cm/s；有限值必须为正。
+
+        Returns
+        -------
+        numpy.ndarray
+            ``I=3*log10(PGV/100)+9.77``，限制到 1--12 度并保留一位小数。
         """
         # 转成 numpy 数组
         PGV0 = np.asarray(PGV0)
@@ -130,4 +156,6 @@ if __name__ == "__main__":
     Cal = GB17742_2020_Cal_instrument_intensity
     print("单个点：", Cal.cal_Intensity(195, 17.7))
     print("多个点：", Cal.cal_Intensity_matrix([50, 100, 200], [5, 10, 20]))
-    print("只有 PGV：", Cal.cal_Intensity_matrix_PGV([5, 10, 20, 150, 200, 400]))
+    print(
+        "只有 PGV：", Cal.cal_Intensity_matrix_PGV([5, 10, 20, 150, 200, 400])
+    )
