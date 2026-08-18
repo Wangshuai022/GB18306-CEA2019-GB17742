@@ -211,7 +211,7 @@ def invert_epicenter_gb18306_vs30(
     result["plot_observations"] = plot_data.attrs["site_plot_observations"]
     if plot_path:
         plot_gb18306_vs_obs(
-            data=plot_data,
+            data=corrected,
             macro_epicenter=result["epicenter"],
             initial_epicenter=(float(hypo[0]), float(hypo[1])),
             Ms=Ms,
@@ -222,6 +222,7 @@ def invert_epicenter_gb18306_vs30(
             max_dist=max_dist,
             fault_lon_mat=result["mesh"]["lon_mat"],
             fault_lat_mat=result["mesh"]["lat_mat"],
+            plot_observations=plot_observations,
             outpath=plot_path,
         )
     return result
