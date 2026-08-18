@@ -127,7 +127,22 @@ def _geometry_groups(lon, lat, strike, sta_lon, sta_lat):
 
 
 class GB18306EllipseField:
-    """GB18306 宏观烈度/PGA/PGV 的解析椭圆场。"""
+    """GB18306 宏观烈度、PGA、PGV 的统一解析椭圆场。
+
+    Parameters
+    ----------
+    region : str
+        ``东部区/中部区/新疆区/青藏区`` 之一。
+    Ms : float
+        GB18306 衰减关系使用的面波震级。
+    extent : float, default 400
+        椭圆场长轴最大距离，单位 km；场外预测返回 NaN。
+
+    Notes
+    -----
+    同一对象预先缓存长短轴系数，并被 Pre、vs_Obs 和震中反演共同调用，
+    避免三套应用各自插值产生差异。PGA 单位 gal，PGV 单位 cm/s。
+    """
 
     def __init__(self, region: str, Ms: float, extent: float = 400.0):
         self.region = str(region)
@@ -212,6 +227,13 @@ class GB18306EllipseField:
         return 10.0**result if log_values else result
 
     def predict_many(self, lon, lat, strike, sta_lon, sta_lat):
+        """预测多个候选震中与多个台站的笛卡尔积。
+
+        ``lon/lat`` 是长度 N 的候选宏观震中，``sta_lon/sta_lat`` 是长度 M
+        的台站坐标，``strike`` 单位为度。返回九个形状 ``(N, M)`` 的数组：
+        ``I, PGA, PGV, aI, bI, aPGA, bPGA, aPGV, bPGV``；a/b 为预测值所在
+        等值椭圆的长短轴距（km）。
+        """
         lon, lat, sta_lon, sta_lat = _validate_coordinates(lon, lat, sta_lon, sta_lat)
         shape = (lon.size, sta_lon.size)
         outputs = [np.full(shape, np.nan) for _ in range(9)]
@@ -261,6 +283,11 @@ class GB18306EllipseField:
         return tuple(outputs)
 
     def predict(self, lon, lat, strike, sta_lon, sta_lat):
+        """预测单个宏观震中处的多个台站。
+
+        参数含义与 ``predict_many`` 相同，但 ``lon/lat`` 为标量；返回九个
+        长度 M 的一维数组，顺序与 ``predict_many`` 完全一致。
+        """
         result = self.predict_many(
             np.atleast_1d(lon), np.atleast_1d(lat), strike, sta_lon, sta_lat
         )
@@ -268,7 +295,22 @@ class GB18306EllipseField:
 
 
 class CEA2019EllipseField:
-    """CEA2019 PGA/PGV/PSA 的解析椭圆场。"""
+    """CEA2019 PGA、PGV、PSA 的统一解析椭圆场。
+
+    Parameters
+    ----------
+    region : str
+        CEA2019 分区，可带或不带末尾“区”。
+    Ms : float
+        CEA2019 系数分段使用的震级。
+    extent : float, default 400
+        椭圆场最大长轴距，单位 km；场外返回 NaN。
+
+    Notes
+    -----
+    -1=PGA、-2=PGV、正数=PSA 周期（0--6 s）。PGA/PSA 单位 gal，PGV
+    单位 cm/s；所有 a/b 返回值单位为 km。
+    """
 
     def __init__(self, region: str, Ms: float, extent: float = 400.0):
         self.region = normalize_cea_region(region)
@@ -283,12 +325,20 @@ class CEA2019EllipseField:
         _cea_calculator(self.region, "短轴")
 
     def coefficients(self, period, axis="长轴"):
+        """返回 ``(A, B, C, sigma, D*exp(E*M))`` 的当前震级系数。"""
         return cea_period_coeffs(self.region, axis, period, self.Ms)
 
     def sigma(self, period):
+        """返回指定周期长轴模型的 log10 标准差 σ。"""
         return self.coefficients(period, "长轴")[3]
 
     def predict_period_many(self, period, lon, lat, strike, sta_lon, sta_lat):
+        """预测一个周期下 N 个候选震中 × M 个台站。
+
+        ``period`` 为 -1(PGA)、-2(PGV) 或 0--6 s PSA 周期；坐标单位为度，
+        ``strike`` 以正北为 0°顺时针。返回 ``(value, a_eq, b_eq)`` 三个
+        ``(N, M)`` 数组，其中 a/b 单位为 km。
+        """
         period = normalize_cea_period(period)
         lon, lat, sta_lon, sta_lat = _validate_coordinates(lon, lat, sta_lon, sta_lat)
         shape = (lon.size, sta_lon.size)
@@ -329,6 +379,10 @@ class CEA2019EllipseField:
         return value_out, a_out, b_out
 
     def predict_period(self, period, lon, lat, strike, sta_lon, sta_lat):
+        """预测单个宏观震中、单个周期下的全部台站。
+
+        返回三个长度 M 的数组 ``(value, a_eq, b_eq)``。
+        """
         result = self.predict_period_many(
             period,
             np.atleast_1d(lon),
@@ -340,7 +394,11 @@ class CEA2019EllipseField:
         return tuple(item[0] for item in result)
 
     def predict_many(self, periods, lon, lat, strike, sta_lon, sta_lat):
-        """一次预测多个周期，返回 ``{规范周期: (value,a,b)}``。"""
+        """一次预测多个周期和多个候选震中。
+
+        返回 ``{规范周期: (value, a_eq, b_eq)}``；每个数组形状均为
+        ``(候选震中数, 台站数)``。
+        """
         return {
             normalize_cea_period(period): self.predict_period_many(
                 period, lon, lat, strike, sta_lon, sta_lat
@@ -349,6 +407,10 @@ class CEA2019EllipseField:
         }
 
     def predict(self, periods, lon, lat, strike, sta_lon, sta_lat):
+        """预测单个宏观震中的多个周期。
+
+        返回 ``{规范周期: (value, a_eq, b_eq)}``；每个数组长度为台站数。
+        """
         return {
             period: tuple(item[0] for item in result)
             for period, result in self.predict_many(
