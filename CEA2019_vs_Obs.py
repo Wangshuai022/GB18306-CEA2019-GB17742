@@ -381,6 +381,7 @@ def plot_cea2019_vs_obs(
     fault_lon_mat=None,
     fault_lat_mat=None,
     plot_observations=None,
+    table_outpath=None,
 ):
     """绘制 CEA2019 的 4×N 预测—观测综合图。
 
@@ -418,12 +419,16 @@ def plot_cea2019_vs_obs(
         场地修正观测的绘图模式。None 表示原样使用 ``data``；``corrected``
         使用参考 Vs30 观测；``raw`` 从 ``*_raw`` 审计列恢复原始场地观测。
         仅改变图中的观测点和绘图残差，不改变任何震中反演结果。
+    table_outpath : str, os.PathLike or None, default None
+        配套逐台站TXT路径。None 时自动使用与 ``outpath`` 相同的目录和文件名，
+        仅把后缀替换为 ``.txt``。TXT采用UTF-8 BOM和制表符分隔。
 
     Returns
     -------
     str or os.PathLike
         原样返回 ``outpath``。四排依次为地图、衰减曲线、残差—距离和
-        全部/近场/远场残差分布。
+        全部/近场/远场残差分布；第四排每组标注 N、均值 μ、中位数 m、
+        总体标准差 σ 和均方根 RMS。每次出图同时写出配套逐台站TXT。
 
     Raises
     ------
@@ -795,6 +800,20 @@ def plot_cea2019_vs_obs(
     fig.savefig(outpath, dpi=200, bbox_inches="tight")
     plt.close(fig)
     print(f"已保存图件：{os.path.abspath(outpath)}")
+    if table_outpath is None:
+        table_outpath = os.path.splitext(os.fspath(outpath))[0] + ".txt"
+    export_cea2019_vs_obs_txt(
+        data=data,
+        macro_epicenter=macro_epicenter,
+        Ms=Ms,
+        region=region,
+        strike=strike,
+        params=params,
+        extent=extent,
+        max_dist=max_dist,
+        outpath=table_outpath,
+        param_cols=param_cols,
+    )
     return outpath
 
 
@@ -889,14 +908,14 @@ if __name__ == "__main__":
 
     plot_cea2019_vs_obs(
         data="20250107_China_Dingri_total_info_Bandpass_0.05_20Hz.txt",
-        macro_epicenter=(87.5686, 28.9874),  # 87.5686,28.9874
+        macro_epicenter=(87.5597, 28.8978),  # 87.5686,28.9874
         Ms=6.8,
         region="青藏",
         strike=187,
         params=(-1, -2, 0.3, 1.0, 3, 6),
         extent=500.0,
-        max_dist=200.0,
-        outpath="./Test_output/CEA2019_vs_Obs1111.png",
+        max_dist=400.0,
+        outpath="./Test_output/CEA2019_vs_Obs0.png",
         grid_n=100,
         axis="短轴",
     )
