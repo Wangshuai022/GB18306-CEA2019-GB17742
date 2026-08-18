@@ -9,6 +9,7 @@ from CB14_site_correct import _parse_CB14_site_correct_factor_all_period
 from Vs30_site_correction import (
     cb14_site_factor_actual_over_reference,
     correct_observations_to_reference_vs30,
+    prepare_observations_for_site_plot,
     prepare_site_plot_observations,
     query_station_vs30,
     solve_cb14_a1100,
@@ -154,6 +155,54 @@ class CB14ReferenceSiteTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "plot_observations"):
             prepare_site_plot_observations(corrected, "original")
+
+    def test_site_plot_preparation_accepts_file_and_dataframe_without_double_fix(self):
+        raw = pd.DataFrame(
+            {
+                "Sta_ID": ["S1", "S2"],
+                "longi": [100.0, 100.1],
+                "lati": [30.0, 30.1],
+                "Vs30(m/s)": [280.0, 760.0],
+                "PGA_RotD50": [125.0, 80.0],
+                "PGV_RotD50": [13.0, 8.0],
+            }
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "observations.txt"
+            raw.to_csv(path, sep="\t", index=False, encoding="utf-8")
+            for source in (raw, path):
+                corrected = prepare_observations_for_site_plot(
+                    source,
+                    periods=(-1, -2),
+                    plot_observations="corrected",
+                    correction_kwargs={"verbose": False},
+                )
+                raw_plot = prepare_observations_for_site_plot(
+                    source,
+                    periods=(-1, -2),
+                    plot_observations="raw",
+                    correction_kwargs={"verbose": False},
+                )
+                self.assertEqual(corrected.attrs["site_reference_vs30"], 500.0)
+                self.assertEqual(
+                    corrected.attrs["site_plot_observations"], "corrected"
+                )
+                self.assertFalse(
+                    np.allclose(corrected["PGA_RotD50"], raw["PGA_RotD50"])
+                )
+                np.testing.assert_allclose(
+                    raw_plot["PGA_RotD50"], raw["PGA_RotD50"]
+                )
+
+                corrected_again = prepare_observations_for_site_plot(
+                    corrected,
+                    periods=(-1, -2),
+                    plot_observations="corrected",
+                    correction_kwargs={"verbose": False},
+                )
+                np.testing.assert_allclose(
+                    corrected_again["PGA_RotD50"], corrected["PGA_RotD50"]
+                )
 
 
 if __name__ == "__main__":
