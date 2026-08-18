@@ -107,7 +107,9 @@ def normalize_periods(params):
 # ==================== CEA2019 椭圆场（向量化批预测） ====================
 
 
-def _period_predict_many(T, M, region_core, lon, lat, strike, sta_lon, sta_lat, extent):
+def _period_predict_many(
+    T, M, region_core, lon, lat, strike, sta_lon, sta_lat, extent
+):
     """
     某周期点 T 在 (n_cand) 个候选震中 × (n_sta) 个台站上的批量预测。
     返回 (value, a_eq, b_eq)，形状 (n_cand, n_sta)；场外为 NaN。
@@ -116,7 +118,9 @@ def _period_predict_many(T, M, region_core, lon, lat, strike, sta_lon, sta_lat, 
     return field.predict_period_many(T, lon, lat, strike, sta_lon, sta_lat)
 
 
-def _chi2_batch(periods, M, rc, cand_lon, cand_lat, strike, sta, used_mask, extent):
+def _chi2_batch(
+    periods, M, rc, cand_lon, cand_lat, strike, sta, used_mask, extent
+):
     """候选震中批量 chi2：各周期点对数残差按 σ 归一化后求和"""
     lg = lambda x: np.log10(np.maximum(x, 1e-9))
     used = used_mask[None, :]
@@ -176,7 +180,8 @@ def invert_epicenter_cea2019(
     CEA2019 震中反演主函数。
 
     明确输入：
-        data     实测数据：文件路径或 DataFrame
+        data     实测数据：文件路径或 DataFrame；观测列由 CEA2019_vs_Obs
+                 统一按 RotD50 → H → 有效值 RotD50 → 有效值 H 选择
         Ms       震级（CEA2019 衰减用，M<6.5 与 ≥6.5 分段取系数）
         region   分区："青藏区"/"新疆区"/"东部区"/"中部区"
         hypo     震中 (经度, 纬度, 深度 km)
@@ -195,9 +200,31 @@ def invert_epicenter_cea2019(
         local_refine  最优网格点附近连续精化半宽（°；0 = 仅用网格点）
         outpath / plot_path  统计 txt / 4×N 图输出路径（None = 不导出）
         true_epi  已知震中（仅验证）
+
+    返回 dict：
+        epicenter/lon/lat
+            最优宏观震中；经纬度单位为度。
+        chi2/reduced_chi2/degrees_of_freedom
+            使用各参数模型 σ 归一化后的目标函数及自由度修正值。
+        n_used/n_sta
+            联合反演有效台站数与坐标有效的总台站数。
+        table
+            逐台站坐标、观测、预测、残差、椭圆距和参与标志。
+        mesh
+            断层网格、尺寸、震源位置和地表出露调整信息。
+        observation_columns
+            每个参数实际采用的原始观测列名。
+        optimizer_success/optimizer_message/boundary_hit
+            连续精化状态和最优点是否位于断层边界。
+
+    注意：联合反演只使用所有 ``invert_GMIMs`` 均为正有限值且位于
+    ``max_dist`` 范围内的台站。残差为 log10(观测/预测)，chi2 对每个参数
+    按对应 σ 标准化；经纬度是待估的两个自由参数。
     """
     periods = normalize_periods(invert_GMIMs)
-    plot_periods = normalize_periods(plot_GMIMs) if plot_GMIMs is not None else periods
+    plot_periods = (
+        normalize_periods(plot_GMIMs) if plot_GMIMs is not None else periods
+    )
     if not periods:
         raise ValueError(
             "invert_GMIMs 不能为空；支持 -1/0(PGA)、-2(PGV)、数值周期(PSA)"
@@ -213,12 +240,16 @@ def invert_epicenter_cea2019(
 
     # ---- 1. 断层网格：优先外部网格，未提供才用 L14 ----
     if (fault_lon_mat is None) != (fault_lat_mat is None):
-        raise ValueError("fault_lon_mat 与 fault_lat_mat 必须同时提供或同时省略")
+        raise ValueError(
+            "fault_lon_mat 与 fault_lat_mat 必须同时提供或同时省略"
+        )
     if fault_lon_mat is not None:
         flon_in = np.asarray(fault_lon_mat, dtype=float)
         flat_in = np.asarray(fault_lat_mat, dtype=float)
         if flon_in.ndim != 2 or flat_in.ndim != 2:
-            raise ValueError("fault_lon_mat / fault_lat_mat 必须是二维网格矩阵")
+            raise ValueError(
+                "fault_lon_mat / fault_lat_mat 必须是二维网格矩阵"
+            )
         if flon_in.shape != flat_in.shape:
             raise ValueError("fault_lon_mat 与 fault_lat_mat 形状必须一致")
         mesh = {
@@ -260,7 +291,10 @@ def invert_epicenter_cea2019(
     # ---- 2. 0~200 km 预筛（以震中投影 + strike 为参考，所有周期点均有效） ----
     labels = [period_label(T) for T in periods]
     observation_mask = np.logical_and.reduce(
-        [np.isfinite(sta[label].values) & (sta[label].values > 0) for label in labels]
+        [
+            np.isfinite(sta[label].values) & (sta[label].values > 0)
+            for label in labels
+        ]
     )
     used_mask = observation_mask.copy()
     for T in periods:
@@ -300,8 +334,12 @@ def invert_epicenter_cea2019(
 
     # 断层投影多边形：反演震中不允许超出断层范围
     flon, flat = mesh["lon_mat"], mesh["lat_mat"]
-    poly_lon = np.concatenate([flon[0], flon[:, -1], flon[-1][::-1], flon[:, 0][::-1]])
-    poly_lat = np.concatenate([flat[0], flat[:, -1], flat[-1][::-1], flat[:, 0][::-1]])
+    poly_lon = np.concatenate(
+        [flon[0], flon[:, -1], flon[-1][::-1], flon[:, 0][::-1]]
+    )
+    poly_lat = np.concatenate(
+        [flat[0], flat[:, -1], flat[-1][::-1], flat[:, 0][::-1]]
+    )
     from matplotlib.path import Path
 
     fault_path = Path(np.column_stack([poly_lon, poly_lat]))
@@ -384,7 +422,12 @@ def invert_epicenter_cea2019(
     # ---- 5. 最终预测 + 逐台站统计表 ----
     lg = lambda x: np.log10(np.maximum(x, 1e-9))
     R = np.sqrt(
-        ((sta["lon"].values - lon_opt) * 111.32 * math.cos(math.radians(lat_opt))) ** 2
+        (
+            (sta["lon"].values - lon_opt)
+            * 111.32
+            * math.cos(math.radians(lat_opt))
+        )
+        ** 2
         + ((sta["lat"].values - lat_opt) * 110.57) ** 2
     )
     table = pd.DataFrame(
@@ -429,8 +472,12 @@ def invert_epicenter_cea2019(
         table[f"{label}_res"] = np.round(res_ln, 4)
         table[f"{label}_res_ln"] = np.round(res_ln, 4)
         table[f"{label}_res_lg10"] = np.round(res_lg10, 4)
-        rms[f"rms_ln{label}"] = float(np.sqrt(np.mean(res_ln[used_final] ** 2)))
-        rms[f"rms_lg10{label}"] = float(np.sqrt(np.mean(res_lg10[used_final] ** 2)))
+        rms[f"rms_ln{label}"] = float(
+            np.sqrt(np.mean(res_ln[used_final] ** 2))
+        )
+        rms[f"rms_lg10{label}"] = float(
+            np.sqrt(np.mean(res_lg10[used_final] ** 2))
+        )
         # 兼容旧调用：旧键仍表示 log10 RMS。
         rms[f"rms_lg{label}"] = rms[f"rms_lg10{label}"]
     table["used"] = used_final
@@ -438,7 +485,9 @@ def invert_epicenter_cea2019(
     n_residuals = n_used * len(periods)
     degrees_of_freedom = max(n_residuals - 2, 0)
     reduced_chi2 = (
-        float(chi2_opt / degrees_of_freedom) if degrees_of_freedom > 0 else np.nan
+        float(chi2_opt / degrees_of_freedom)
+        if degrees_of_freedom > 0
+        else np.nan
     )
     boundary_hit = fault_path.contains_point(
         (lon_opt, lat_opt), radius=1e-8
@@ -478,7 +527,11 @@ def invert_epicenter_cea2019(
             f"({lon_opt:.4f}, {lat_opt:.4f})  chi2 = {chi2_opt:.2f}, "
             f"reduced chi2 = {reduced_chi2:.2f}"
             f"（{n_used}/{len(sta)} 台站参与）"
-            + (f"  距已知震中 {dist_true:.1f} km" if np.isfinite(dist_true) else "")
+            + (
+                f"  距已知震中 {dist_true:.1f} km"
+                if np.isfinite(dist_true)
+                else ""
+            )
         )
     if outpath:
         export_cea2019_vs_obs_txt(
@@ -511,7 +564,10 @@ def _haversine_km(lon1, lat1, lon2, lat2):
     p1, p2 = math.radians(lat1), math.radians(lat2)
     dp = math.radians(lat2 - lat1)
     dl = math.radians(lon2 - lon1)
-    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    a = (
+        math.sin(dp / 2) ** 2
+        + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    )
     return 2.0 * re * math.asin(math.sqrt(a))
 
 
@@ -522,11 +578,12 @@ if __name__ == "__main__":
         Ms=6.8,
         Mw=7.0,
         region="青藏区",
-        max_dist=200,
+        max_dist=400,
         hypo=(87.45, 28.5, 10.0),
         strike=187.0,
         dip=49.0,
         rake=-78.0,
+        shypo=10,
         invert_GMIMs=(-1, -2),  # 迭代：PGA + PGV
         plot_GMIMs=[-1, -2, 0.3, 1, 3, 6],  # 绘图：PGA/PGV/PSA0.3/1/3/6
         true_epi=(87.45, 28.5),
