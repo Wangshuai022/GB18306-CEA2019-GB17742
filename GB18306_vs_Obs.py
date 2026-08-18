@@ -341,6 +341,7 @@ def plot_gb18306_vs_obs(
     fault_lon_mat=None,
     fault_lat_mat=None,
     plot_observations=None,
+    table_outpath=None,
 ):
     """绘制 GB18306 的 4×N 预测—观测综合图。
 
@@ -380,12 +381,16 @@ def plot_gb18306_vs_obs(
         使用 ``Vs30_site_correction.correct_observations_to_reference_vs30``
         生成的参考场地观测；``raw`` 从该表的 ``*_raw`` 列恢复原始场地观测。
         本参数只控制图上的观测点和绘图残差，不进行震中反演。
+    table_outpath : str, os.PathLike or None, default None
+        配套逐台站TXT路径。None 时自动使用与 ``outpath`` 相同的目录和文件名，
+        仅把后缀替换为 ``.txt``。TXT采用UTF-8 BOM和制表符分隔。
 
     Returns
     -------
     str or os.PathLike
         原样返回 ``outpath``。图的四排依次为地图、衰减曲线、残差—距离和
-        全部/近场/远场残差分布。
+        全部/近场/远场残差分布；第四排每组标注 N、均值 μ、中位数 m、
+        总体标准差 σ 和均方根 RMS。每次出图同时写出配套逐台站TXT。
 
     Raises
     ------
@@ -726,6 +731,20 @@ def plot_gb18306_vs_obs(
     fig.savefig(outpath, dpi=200, bbox_inches="tight")
     plt.close(fig)
     print(f"已保存图件：{os.path.abspath(outpath)}")
+    if table_outpath is None:
+        table_outpath = os.path.splitext(os.fspath(outpath))[0] + ".txt"
+    export_gb18306_vs_obs_txt(
+        data=data,
+        Ms=Ms,
+        region=region,
+        strike=strike,
+        macro_epicenter=macro_epicenter,
+        params=params,
+        extent=extent,
+        max_dist=max_dist,
+        outpath=table_outpath,
+        param_cols=param_cols,
+    )
     return outpath
 
 
