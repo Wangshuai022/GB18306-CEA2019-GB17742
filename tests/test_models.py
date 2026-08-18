@@ -137,24 +137,80 @@ class ObservationLoadingTests(unittest.TestCase):
                 "lati": [28.5, 28.6],
                 "I": [7.0, 6.5],
                 "EPA_H": [100.0, 80.0],
-                "PGA_H": [999.0, 999.0],
+                "EPA_RotD50": [110.0, 85.0],
+                "PGA_H": [120.0, 90.0],
+                "PGA_RotD50": [130.0, 95.0],
                 "EPV_H": [10.0, 8.0],
-                "PGV_H": [99.0, 99.0],
+                "EPV_RotD50": [11.0, 8.5],
+                "PGV_H": [12.0, 9.0],
+                "PGV_RotD50": [13.0, 9.5],
                 "pSa(T=0.30s)_H": [150.0, np.nan],
+                "pSa(T=0.30s)_RotD50": [160.0, np.nan],
             }
         )
 
-    def test_epa_epv_priority_is_preserved(self):
+    def test_rotd50_priority_is_used_by_all_observation_loaders(self):
         gb = load_gb_obs(self.base, (-1, -2, "Intensity"))
-        np.testing.assert_array_equal(gb["PGA"].values, [100.0, 80.0])
-        np.testing.assert_array_equal(gb["PGV"].values, [10.0, 8.0])
-        self.assertEqual(gb.attrs["source_columns"]["PGA"], "EPA_H")
-        self.assertEqual(gb.attrs["source_columns"]["PGV"], "EPV_H")
+        np.testing.assert_array_equal(gb["PGA"].values, [130.0, 95.0])
+        np.testing.assert_array_equal(gb["PGV"].values, [13.0, 9.5])
+        self.assertEqual(gb.attrs["source_columns"]["PGA"], "PGA_RotD50")
+        self.assertEqual(gb.attrs["source_columns"]["PGV"], "PGV_RotD50")
+
+        cea = load_cea_obs(self.base, (-1, -2, 0.3))
+        self.assertEqual(cea.attrs["source_columns"]["PGA"], "PGA_RotD50")
+        self.assertEqual(cea.attrs["source_columns"]["PGV"], "PGV_RotD50")
+        self.assertEqual(
+            cea.attrs["source_columns"]["PSA(T=0.30s)"],
+            "pSa(T=0.30s)_RotD50",
+        )
+
+        inversion = load_station_data(self.base, mode="pga_pgv")
+        self.assertEqual(inversion.attrs["source_columns"]["PGA"], "PGA_RotD50")
+        self.assertEqual(inversion.attrs["source_columns"]["PGV"], "PGV_RotD50")
+
+    def test_pga_pgv_priority_falls_back_in_declared_order(self):
+        stages = (
+            ((), "PGA_RotD50", "PGV_RotD50"),
+            (("PGA_RotD50", "PGV_RotD50"), "PGA_H", "PGV_H"),
+            (
+                ("PGA_RotD50", "PGV_RotD50", "PGA_H", "PGV_H"),
+                "EPA_RotD50",
+                "EPV_RotD50",
+            ),
+            (
+                (
+                    "PGA_RotD50",
+                    "PGV_RotD50",
+                    "PGA_H",
+                    "PGV_H",
+                    "EPA_RotD50",
+                    "EPV_RotD50",
+                ),
+                "EPA_H",
+                "EPV_H",
+            ),
+        )
+        for dropped, expected_pga, expected_pgv in stages:
+            with self.subTest(expected=(expected_pga, expected_pgv)):
+                data = self.base.drop(columns=list(dropped))
+                loaded = load_gb_obs(data, (-1, -2))
+                self.assertEqual(loaded.attrs["source_columns"]["PGA"], expected_pga)
+                self.assertEqual(loaded.attrs["source_columns"]["PGV"], expected_pgv)
+                cea = load_cea_obs(data, (-1, -2))
+                self.assertEqual(cea.attrs["source_columns"]["PGA"], expected_pga)
+                self.assertEqual(cea.attrs["source_columns"]["PGV"], expected_pgv)
+                inversion = load_station_data(data, mode="pga_pgv")
+                self.assertEqual(
+                    inversion.attrs["source_columns"]["PGA"], expected_pga
+                )
+                self.assertEqual(
+                    inversion.attrs["source_columns"]["PGV"], expected_pgv
+                )
 
     def test_parameter_nan_is_kept_for_per_parameter_comparison(self):
         cea = load_cea_obs(self.base, (-1, 0.3))
         self.assertTrue(np.isnan(cea.loc[1, "PSA(T=0.30s)"]))
-        self.assertEqual(cea.attrs["source_columns"]["PGA"], "EPA_H")
+        self.assertEqual(cea.attrs["source_columns"]["PGA"], "PGA_RotD50")
 
     def test_gb_single_parameter_loader_does_not_require_other_columns(self):
         pga_only = self.base[["Sta_ID", "longi", "lati", "PGA_H"]]
