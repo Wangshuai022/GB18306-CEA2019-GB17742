@@ -4,7 +4,8 @@
 =================================================================
 这是从 Codex stat-violin-plot 技能复制到工作目录的绘图包，方便本项目直接使用。
 用于画"残差分布"这类统计图：左边 KDE 半小提琴、中间箱线、右边抖动散点，
-并在顶部标注 N（样本数）、μ（均值）、m（中位数）。
+并在顶部标注 N（样本数）、μ（均值）、m（中位数）、σ（总体标准差）和
+RMS（均方根）。
 
 样式规则（固定，不要绕过）：
     - Agg 后端；axes.unicode_minus = False；DPI 300
@@ -37,12 +38,12 @@
     violin_scale 小提琴半宽（默认 0.2）
     box_width    箱线宽（默认 0.11）
     jitter_scale 散点横向抖动幅度（默认 0.04）
-    annotate     是否标注 N/μ/m（默认 True）
+    annotate     是否标注 N/μ/m/σ/RMS（默认 True）
     value_fmt    标注数值格式（残差用 {:.2f} 或 {:.3f}）
 """
 
-import numpy as np
 import matplotlib
+import numpy as np
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -107,11 +108,11 @@ def half_violin_box_scatter(
     violin_scale, box_width, jitter_scale : float
         半小提琴宽度、箱体宽度和散点横向抖动标准差。
     annotate : bool
-        是否标注样本量 N、均值和中位数。
+        是否标注样本量 N、均值 μ、中位数 m、总体标准差 σ 和均方根 RMS。
     annotate_y : float or None
         注释框的 y 坐标；None 时根据样本最大值自动确定。
     value_fmt : str
-        均值和中位数的 Python 格式串，例如 ``"{:.2f}"``。
+        μ、m、σ 和 RMS 的 Python 格式串，例如 ``"{:.2f}"``。
     alpha_scatter : float
         散点透明度。
     s : float
@@ -177,13 +178,23 @@ def half_violin_box_scatter(
         s=s, edgecolors="none",
     )
 
-    # ---- 顶部标注 N / μ / m ----
+    # ---- 顶部标注 N / μ / m / σ / RMS ----
     if annotate:
         y_text = annotate_y if annotate_y is not None else hi + pad
         n = len(data)
         mu = float(np.mean(data))
         med = float(np.median(data))
-        text_str = f"$N$ = {n}\n$\\mu$ = {value_fmt.format(mu)}\n$m$ = {value_fmt.format(med)}"
+        # 这里采用总体标准差（ddof=0），与当前一组有限残差的描述统计一致；
+        # RMS 保留残差相对零线的整体幅度，因此通常不等于标准差。
+        sigma = float(np.std(data, ddof=0))
+        rms = float(np.sqrt(np.mean(np.square(data))))
+        text_str = (
+            f"$N$ = {n}\n"
+            f"$\\mu$ = {value_fmt.format(mu)}\n"
+            f"$m$ = {value_fmt.format(med)}\n"
+            f"$\\sigma$ = {value_fmt.format(sigma)}\n"
+            f"RMS = {value_fmt.format(rms)}"
+        )
         ax.text(
             x, y_text, text_str, ha="center", va="bottom",
             bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.5, edgecolor="black"),
