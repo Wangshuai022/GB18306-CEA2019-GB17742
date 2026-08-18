@@ -68,13 +68,13 @@ class ReleaseContractTests(unittest.TestCase):
             gb_obs.plot_gb18306_vs_obs,
             cea_obs.plot_cea2019_vs_obs,
         ):
-            parameter = inspect.signature(function).parameters.get(
-                "plot_observations"
-            )
-            self.assertIsNotNone(
-                parameter,
-                f"{function.__module__}.{function.__name__} 缺少公开绘图开关",
-            )
+            parameters = inspect.signature(function).parameters
+            for name in ("plot_observations", "site_correction_kwargs"):
+                self.assertIn(
+                    name,
+                    parameters,
+                    f"{function.__module__}.{function.__name__} 缺少 {name}",
+                )
 
     def test_vs30_wrappers_default_to_corrected_and_forward_switch(self):
         cases = (
@@ -236,6 +236,7 @@ class ReleaseContractTests(unittest.TestCase):
             cea_obs.plot_cea2019_vs_obs,
             site.query_station_vs30,
             site.correct_observations_to_reference_vs30,
+            site.prepare_observations_for_site_plot,
             gb_vs30.invert_epicenter_gb18306_vs30,
             cea_vs30.invert_epicenter_cea2019_vs30,
         )
