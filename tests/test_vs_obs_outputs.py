@@ -18,6 +18,12 @@ OBSERVATIONS = ROOT / "20250107_China_Dingri_total_info_Bandpass_0.05_20Hz.txt"
 class PairedPlotTableOutputTests(unittest.TestCase):
     """公共绘图接口必须同时留下可复用的逐台站TXT数据。"""
 
+    @staticmethod
+    def _site_ready_observations() -> pd.DataFrame:
+        data = pd.read_csv(OBSERVATIONS, sep="\t", encoding="utf-8").head(6).copy()
+        data["Vs30(m/s)"] = [280.0, 350.0, 500.0, 620.0, 760.0, 420.0]
+        return data
+
     def _assert_readable_table(self, png_path: Path) -> None:
         txt_path = png_path.with_suffix(".txt")
         self.assertTrue(png_path.is_file(), png_path)
@@ -39,7 +45,7 @@ class PairedPlotTableOutputTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             png_path = Path(temp_dir) / "gb_plot.png"
             gb.plot_gb18306_vs_obs(
-                data=OBSERVATIONS,
+                data=self._site_ready_observations(),
                 macro_epicenter=(87.612, 28.823),
                 Ms=6.8,
                 region="青藏区",
@@ -49,14 +55,23 @@ class PairedPlotTableOutputTests(unittest.TestCase):
                 extent=150.0,
                 max_dist=100.0,
                 outpath=png_path,
+                plot_observations="corrected",
+                site_correction_kwargs={"verbose": False},
             )
             self._assert_readable_table(png_path)
 
     def test_cea2019_plot_automatically_writes_same_stem_txt(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             png_path = Path(temp_dir) / "cea_plot.png"
+            observation_path = Path(temp_dir) / "observations.txt"
+            self._site_ready_observations().to_csv(
+                observation_path,
+                sep="\t",
+                index=False,
+                encoding="utf-8",
+            )
             cea.plot_cea2019_vs_obs(
-                data=OBSERVATIONS,
+                data=observation_path,
                 macro_epicenter=(87.5597, 28.8978),
                 Ms=6.8,
                 region="青藏",
@@ -66,6 +81,8 @@ class PairedPlotTableOutputTests(unittest.TestCase):
                 extent=150.0,
                 max_dist=100.0,
                 outpath=png_path,
+                plot_observations="corrected",
+                site_correction_kwargs={"verbose": False},
             )
             self._assert_readable_table(png_path)
 
