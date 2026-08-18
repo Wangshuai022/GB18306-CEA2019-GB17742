@@ -1107,13 +1107,41 @@ def compute_plane_distances(
     hypocenter_lat: float | None = None,
     strike_override: float | None = None,
 ):
-    """
-    一次计算单个断层面的距离和方位角量，返回字典。
+    """一次计算一个有限断层对应的全部距离和方位角指标。
 
-    v4 对 ``source_to_site_angle`` 使用 NGA-West2 的有限断层定义；
-    同时将所有绝对方位角严格规范化到 [0, 360)，避免浮点误差把正北显示为 360°。
-    若同时提供 hypocenter_lon / hypocenter_lat，则额外返回旧程序中的
-    ``epi_to_site_angle`` 和 ``epi_to_site_angle_refer_strike``；否则这两项为 NaN。
+    Parameters
+    ----------
+    fault_lon, fault_lat, fault_depth : array-like, shape (n_dip, n_strike)
+        断层网格节点经度、纬度（度）和深度（km），三者形状必须一致。
+        第一行必须是断层上缘，列方向沿走向排列。
+    site_lon, site_lat : scalar or array-like
+        场点经纬度（度），可为单台站或多台站。
+    site_depth : scalar or array-like, default 0
+        场点深度（km，向下为正），可广播到台站形状。
+    hypocenter_lon, hypocenter_lat : float or None
+        可选震源地表投影。必须同时提供，用于计算震中到台站的绝对/相对方位角。
+    strike_override : float or None
+        可选走向（度）；None 时由断层上缘自动估计。
+
+    Returns
+    -------
+    dict of numpy.ndarray
+        ``rrup``、``rjb``、``rx`` 单位为 km；``azimuth`` 是相对断层走向的
+        方位角；``source_to_site_angle`` 使用 NGA-West2 有限断层定义；
+        ``epi_to_site_angle`` 为震中到场点绝对方位角 [0,360)，
+        ``epi_to_site_angle_refer_strike`` 为相对走向角 [-180,180]。
+        未提供震源经纬度时，最后两项为 NaN。
+
+    Raises
+    ------
+    ValueError
+        断层网格/台站坐标形状或数值无效，或只提供一个震源坐标。
+
+    Notes
+    -----
+    当前离散定义下 Rrup 是场点到断层网格节点的最小三维距离；Rjb 是到断层
+    地表投影的最短距离；Rx 下盘为负、上盘为正。所有绝对方位角严格归一化到
+    [0,360)，避免正北因浮点误差显示为 360°。
     """
     flon, flat, fdep, _ = _validate_fault_mesh(
         fault_lon, fault_lat, fault_depth
