@@ -285,6 +285,13 @@ def invert_epicenter_gb18306(
     fault_lon_mat=None,
     fault_lat_mat=None,
     plot_GMIMs=None,
+    evaluation_path=None,
+    evaluation_table_path=None,
+    evaluation_GMIMs=None,
+    evaluation_distance_range=None,
+    evaluation_station_type="all",
+    evaluation_axis="长轴",
+    evaluation_figsize_cm=None,
     verbose=True,
 ):
     """
@@ -318,6 +325,13 @@ def invert_epicenter_gb18306(
                     含断层投影、初始破裂点与宏观震中）
         plot_GMIMs 绘图参数（与反演 mode 分开），如 (-1,-2,"Intensity")；
                    None 时自动绘制数据中实际存在的全部 GB18306 参数
+        evaluation_path 可选 PGA/PGV 半小提琴—箱线—散点单子图组合图路径
+        evaluation_table_path 组合图配套 TXT；None 时与图同名
+        evaluation_GMIMs 评估参数；None 时默认 (-1,-2,"Intensity")
+        evaluation_distance_range 可选 (最小距离, 最大距离) km 筛选
+        evaluation_station_type all / EI / HN，或全部/烈度台/强震仪
+        evaluation_axis 距离筛选采用长轴或短轴等效椭圆距
+        evaluation_figsize_cm 组合图宽和高；None 时按参数数量自动扩展
         true_epi 已知震中（仅验证用）
 
     返回 dict：epicenter / lon / lat / strike / chi2 / n_used / rms_* /
@@ -636,6 +650,32 @@ def invert_epicenter_gb18306(
             fault_lon_mat=mesh["lon_mat"],
             fault_lat_mat=mesh["lat_mat"],
             outpath=plot_path,
+        )
+    if evaluation_path:
+        from GB18306_vs_Obs import (
+            DEFAULT_GB18306_EVALUATION_PARAMS,
+            plot_gb18306_residual_evaluation,
+        )
+
+        evaluation_params = (
+            DEFAULT_GB18306_EVALUATION_PARAMS
+            if evaluation_GMIMs is None
+            else evaluation_GMIMs
+        )
+        result["evaluation"] = plot_gb18306_residual_evaluation(
+            data=data,
+            macro_epicenter=(lon_opt, lat_opt),
+            Ms=Ms,
+            region=region,
+            strike=strike,
+            params=evaluation_params,
+            extent=extent,
+            outpath=evaluation_path,
+            axis=evaluation_axis,
+            distance_range=evaluation_distance_range,
+            station_type=evaluation_station_type,
+            table_outpath=evaluation_table_path,
+            figsize_cm=evaluation_figsize_cm,
         )
     return result
 
