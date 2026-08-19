@@ -90,6 +90,8 @@ def half_violin_box_scatter(
     value_fmt="{:.2f}",
     alpha_scatter=0.7,
     s=20,
+    draw_scatter=True,
+    showfliers=True,
 ):
     """在已有坐标轴上绘制单组“半小提琴 + 箱线 + 散点”。
 
@@ -117,6 +119,12 @@ def half_violin_box_scatter(
         散点透明度。
     s : float
         散点面积，单位为 points²。
+    draw_scatter : bool, default True
+        是否绘制函数自带的单色散点。False 时仍绘制半小提琴和箱线，便于
+        调用方叠加按距离等连续变量着色、按仪器类型区分符号的自定义散点。
+    showfliers : bool, default True
+        箱线图是否额外绘制离群点。当全部样本已作为右侧散点展示时可设为
+        False，避免箱线离群点与台站散点重复或混淆。
 
     Returns
     -------
@@ -162,21 +170,26 @@ def half_violin_box_scatter(
     # ---- 中：箱线（中位数、四分位、须、离群点）----
     ax.boxplot(
         data, positions=[x], widths=box_width, patch_artist=True,
+        showfliers=showfliers,
         boxprops=dict(facecolor=color, edgecolor="k", alpha=0.7, linewidth=1.5),
         whiskerprops=dict(color="k", linewidth=1.5),
         capprops=dict(color="k", linewidth=1.5),
         medianprops=dict(color="black", linewidth=2.5),
-        flierprops=dict(marker="o", markerfacecolor=color, markersize=4, alpha=0.5),
+        flierprops=dict(
+            marker="o", markerfacecolor=color, markeredgecolor="none",
+            markersize=4, alpha=0.5,
+        ),
     )
 
     # ---- 右：抖动散点（固定随机种子 42，保证每次图一致）----
-    rng = np.random.default_rng(42)
-    jitter = rng.normal(0, jitter_scale, size=len(data))
-    scatter_x = np.full_like(data, x + right_offset) + jitter
-    ax.scatter(
-        scatter_x, data, color=color, alpha=alpha_scatter,
-        s=s, edgecolors="none",
-    )
+    if draw_scatter:
+        rng = np.random.default_rng(42)
+        jitter = rng.normal(0, jitter_scale, size=len(data))
+        scatter_x = np.full_like(data, x + right_offset) + jitter
+        ax.scatter(
+            scatter_x, data, color=color, alpha=alpha_scatter,
+            s=s, edgecolors="none",
+        )
 
     # ---- 顶部标注 N / μ / m / σ / RMS ----
     if annotate:
