@@ -66,6 +66,10 @@ from CEA2019_pre import (
 )
 from ellipse_fields import CEA2019EllipseField
 from GB17742_class import GB17742_2020_Cal_instrument_intensity as CAL_INT
+from residual_evaluation import (
+    DEFAULT_CEA2019_EVALUATION_PARAMS,
+    plot_residual_evaluation_combined,
+)
 from stat_violin import (
     apply_style,
     fit_annotations_inside,
@@ -166,6 +170,7 @@ def load_obs_data(data, params, param_cols=None):
         df = data.copy()
     else:
         raise TypeError("data 必须是文件路径或 pandas.DataFrame")
+    input_attrs = dict(df.attrs)
     df.columns = [str(c).strip() for c in df.columns]
     df = df.rename(columns={"longi": "lon", "lati": "lat"})
     if "lon" not in df.columns or "lat" not in df.columns:
@@ -208,6 +213,7 @@ def load_obs_data(data, params, param_cols=None):
     out = out.dropna(subset=["lon", "lat"]).reset_index(drop=True)
     if out.empty:
         raise ValueError("没有经纬度有效的观测台站")
+    out.attrs.update(input_attrs)
     out.attrs["source_columns"] = source_columns
     return out
 
@@ -361,6 +367,110 @@ def _compute_vs_obs(
     }
 
 
+def plot_cea2019_residual_evaluation(
+    data,
+    macro_epicenter,
+    Ms,
+    region,
+    strike,
+    params=DEFAULT_CEA2019_EVALUATION_PARAMS,
+    extent=400.0,
+    outpath="CEA2019_residual_evaluation.png",
+    param_cols=None,
+    axis="长轴",
+    distance_range=None,
+    station_type="all",
+    table_outpath=None,
+    figsize_cm=(20.0, 12.0),
+    plot_observations=None,
+    site_correction_kwargs=None,
+    title=None,
+):
+    """绘制 CEA2019 跨周期预测—观测残差组合评估图。
+
+    Parameters
+    ----------
+    data : str, os.PathLike or pandas.DataFrame
+        观测文件或 DataFrame；支持原始数据和已完成 CB14 修正的数据。
+    macro_epicenter : tuple(float, float)
+        前向预测采用的宏观震中经纬度。
+    Ms, region, strike, extent, param_cols
+        与 :func:`plot_cea2019_vs_obs` 中同名参数一致。
+    params : sequence
+        横轴参数，默认 ``PGA/PGV`` 加 0.10--6.00 s 的 15 个 PSA 点。
+        本评估图不混入线性烈度残差。
+    outpath : str or os.PathLike
+        单一坐标轴内半小提琴、箱线和距离着色散点组合图的 PNG 输出路径。
+    axis : {"长轴", "短轴"}
+        距离筛选使用的等效椭圆轴。
+    distance_range : tuple(float or None, float or None) or None
+        距离筛选，单位 km；下限包含、上限不包含。例如
+        ``(None, 200)`` 或 ``(200, None)``。
+    station_type : {"all", "EI", "HN"} or Chinese alias
+        全部台站、烈度台或强震仪。
+    table_outpath : str, os.PathLike or None
+        配套 TXT；None 时与 PNG 同名。
+    figsize_cm : tuple(float, float) or None, default (20, 12)
+        图宽和图高，单位 cm；None 时按参数数量自动扩展。
+    plot_observations : {None, "corrected", "raw"}
+        与综合图一致的场地观测开关；文件与 DataFrame 均可直接输入。
+    site_correction_kwargs : dict or None
+        原始输入需要 CB14 修正时传给场地修正函数的参数。
+    title : str or None
+        可选总标题。
+
+    Returns
+    -------
+    dict
+        图路径、TXT 路径、逐台站长表、统计摘要和筛选元数据。
+    """
+    normalized = normalize_params(params)
+    if any(param == "Intensity" for param in normalized):
+        raise ValueError("CEA2019 跨周期评估图不混入烈度；请仅给 PGA/PGV/PSA")
+    if plot_observations is not None:
+        from Vs30_site_correction import prepare_observations_for_site_plot
+
+        data = prepare_observations_for_site_plot(
+            data,
+            periods=normalized,
+            plot_observations=plot_observations,
+            correction_kwargs=site_correction_kwargs,
+        )
+    computation = _compute_vs_obs(
+        data,
+        macro_epicenter,
+        Ms,
+        region,
+        strike,
+        normalized,
+        extent,
+        param_cols,
+    )
+    observation_state = None
+    if isinstance(data, pd.DataFrame):
+        mode = data.attrs.get("site_plot_observations")
+        if mode == "raw":
+            observation_state = "原始场地观测"
+        elif "site_reference_vs30" in data.attrs:
+            reference = float(data.attrs["site_reference_vs30"])
+            model = data.attrs.get("site_correction_model", "场地模型")
+            observation_state = f"{model}修正至Vs30={reference:g} m/s"
+    return plot_residual_evaluation_combined(
+        computation,
+        outpath=outpath,
+        model_name="CEA2019",
+        residual_label="ln(Predicted / Observed)",
+        distance_range=distance_range,
+        station_type=station_type,
+        axis=axis,
+        table_outpath=table_outpath,
+        figsize_cm=figsize_cm,
+        title=title,
+        observation_state=observation_state,
+        symmetric_y_step=0.5,
+    )
+
+
 # ==================== 主绘图函数 ====================
 
 
@@ -383,6 +493,12 @@ def plot_cea2019_vs_obs(
     plot_observations=None,
     table_outpath=None,
     site_correction_kwargs=None,
+    evaluation_path=None,
+    evaluation_table_path=None,
+    evaluation_params=DEFAULT_CEA2019_EVALUATION_PARAMS,
+    evaluation_distance_range=None,
+    evaluation_station_type="all",
+    evaluation_figsize_cm=(20.0, 12.0),
 ):
     """绘制 CEA2019 的 4×N 预测—观测综合图。
 
@@ -430,6 +546,19 @@ def plot_cea2019_vs_obs(
         当 ``plot_observations`` 为 ``corrected/raw`` 且 ``data`` 是文件路径或
         原始DataFrame时，传给CB14场地修正的可选参数。省略时使用中国Vs30
         默认路径、参考Vs30=500 m/s、区域CH、关闭盆地项。
+    evaluation_path : str, os.PathLike or None
+        可选单子图残差评估图路径。每个参数位置同时包含半小提琴、箱线和散点，
+        并自动输出同名 TXT。
+    evaluation_table_path : str, os.PathLike or None
+        组合评估图配套 TXT 路径；None 时由 ``evaluation_path`` 自动推导。
+    evaluation_params : sequence
+        评估图横轴参数；默认使用 PGA、PGV 和 0.10--6.00 s PSA。
+    evaluation_distance_range : 2-sequence or None
+        评估图距离筛选 ``(下限, 上限)`` km，下限包含、上限不包含。
+    evaluation_station_type : {"all", "EI", "HN"} or Chinese alias
+        评估图台站类型筛选。
+    evaluation_figsize_cm : 2-sequence or None, default (20, 12)
+        评估图宽和图高，单位 cm；None 时按参数数量自动扩展。
 
     Returns
     -------
@@ -455,6 +584,10 @@ def plot_cea2019_vs_obs(
         site_periods = [
             p for p in normalize_params(params) if p != "Intensity"
         ]
+        if evaluation_path is not None:
+            for period in normalize_params(evaluation_params):
+                if period != "Intensity" and period not in site_periods:
+                    site_periods.append(period)
         data = prepare_observations_for_site_plot(
             data,
             periods=site_periods,
@@ -823,6 +956,23 @@ def plot_cea2019_vs_obs(
         outpath=table_outpath,
         param_cols=param_cols,
     )
+    if evaluation_path is not None:
+        plot_cea2019_residual_evaluation(
+            data=data,
+            macro_epicenter=macro_epicenter,
+            Ms=Ms,
+            region=region,
+            strike=strike,
+            params=evaluation_params,
+            extent=extent,
+            outpath=evaluation_path,
+            param_cols=param_cols,
+            axis=axis,
+            distance_range=evaluation_distance_range,
+            station_type=evaluation_station_type,
+            table_outpath=evaluation_table_path,
+            figsize_cm=evaluation_figsize_cm,
+        )
     return outpath
 
 
@@ -914,7 +1064,7 @@ def export_cea2019_vs_obs_txt(
 if __name__ == "__main__":
 
     os.makedirs("Test_output", exist_ok=True)
-
+    ## 西藏定日
     plot_cea2019_vs_obs(
         data="20250107_China_Dingri_total_info_Bandpass_0.05_20Hz.txt",
         macro_epicenter=(87.5597, 28.8978),  # 87.5686,28.9874
@@ -924,7 +1074,24 @@ if __name__ == "__main__":
         params=(-1, -2, 0.3, 1.0, 3, 6),
         extent=500.0,
         max_dist=400.0,
-        outpath="./Test_output/CEA2019_vs_Obs1.png",
+        outpath="./Test_output/CEA2019_vs_Obs_定日.png",
+        evaluation_path="./Test_output/CEA2019_vs_Obs_定日_evaluation.png",
+        grid_n=100,
+        plot_observations="corrected",
+        axis="长轴",
+    )
+    # # 积石山
+    plot_cea2019_vs_obs(
+        data="20231218_China_Jishishan_total_info_Bandpass_0.05_20Hz.txt",
+        macro_epicenter=(102.842, 35.765),  # 87.5597, 28.8978
+        Ms=6.2,
+        region="青藏",
+        strike=303,
+        params=(-1, -2, 0.3, 1.0, 3, 6),
+        extent=400.0,
+        max_dist=200.0,
+        outpath="./Test_output/CEA2019_vs_Obs_积石山.png",
+        evaluation_path="./Test_output/CEA2019_vs_Obs_积石山_evaluation.png",
         grid_n=100,
         plot_observations="corrected",
         axis="长轴",
