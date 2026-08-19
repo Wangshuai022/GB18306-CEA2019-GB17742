@@ -4,7 +4,7 @@
 核心问题是模型需要宏观震中，而有限断层模型通常给出的是初始破裂点；二者可先
 近似为同一点，也可以利用观测记录反演最优宏观震中。
 
-当前发布版本：**v1.0**（2026-08-18）。
+当前发布版本：**v1.0**（2026-08-19）。
 
 ## V1.0 本轮实际修改清单
 
@@ -13,10 +13,10 @@
 
 | 程序 | V1.0 修改内容 |
 |---|---|
-| `GB18306_vs_Obs.py` | `[功能]` PGA/PGV改为RotD50四级优先；`plot_observations`支持文件路径、原始DataFrame和已修正DataFrame，选择`corrected`时自动调用CB14，选择`raw`时恢复原始场地观测；第四排标注N、μ、m、σ和RMS；每次出图自动写出同名逐台站TXT。 |
-| `CEA2019_vs_Obs.py` | `[功能]` PGA、PGV、PSA改为RotD50优先；`plot_observations`支持文件路径、原始DataFrame和已修正DataFrame并自动处理CB14场地修正；第四排标注N、μ、m、σ和RMS；每次出图自动写出同名逐台站TXT。 |
-| `GB18306_epicenter_inversion.py` | `[功能]` 反演观测列改为 RotD50 四级优先。sigma 加权 chi2、断层约束和返回结构是原有实现，本轮只补充其说明。 |
-| `CEA2019_epicenter_inversion.py` | `[功能]` 通过 `CEA2019_vs_Obs.load_obs_data` 继承新的 RotD50 优先级。多参数 chi2 反演算法未改，本轮补充返回结果和有效样本说明。 |
+| `GB18306_vs_Obs.py` | `[功能]` PGA/PGV改为RotD50四级优先；`plot_observations`支持文件路径、原始DataFrame和已修正DataFrame，选择`corrected`时自动调用CB14，选择`raw`时恢复原始场地观测；第四排标注N、μ、m、σ和RMS；每次出图自动写出同名逐台站TXT；可额外输出PGA、PGV、烈度残差组合评估图和配套TXT。 |
+| `CEA2019_vs_Obs.py` | `[功能]` PGA、PGV、PSA改为RotD50优先；`plot_observations`支持文件路径、原始DataFrame和已修正DataFrame并自动处理CB14场地修正；第四排标注N、μ、m、σ和RMS；每次出图自动写出同名逐台站TXT；可额外输出默认17参数点残差组合评估图和配套TXT。 |
+| `GB18306_epicenter_inversion.py` | `[功能]` 反演观测列改为 RotD50 四级优先；可在最优宏观震中处输出PGA、PGV、烈度残差组合评估图。sigma 加权 chi2、断层约束和返回结构是原有实现。 |
+| `CEA2019_epicenter_inversion.py` | `[功能]` 通过 `CEA2019_vs_Obs.load_obs_data` 继承新的 RotD50 优先级；可在最优宏观震中处输出默认17参数点残差组合评估图。多参数 chi2 反演算法未改。 |
 | `Vs30_site_correction.py` | 新增中国 Vs30 大文件分块查询、CB14 非线性 A1100 反解、PGA/PGV/PSA 到参考 Vs30 的统一换算和逐台站审计表。 |
 | `GB18306_epicenter_inversion_Vs30.py` | 新增 GB18306 场地修正版反演；反演固定使用 Vs30=500 m/s 观测，绘图可在 `corrected/raw` 间切换。 |
 | `CEA2019_epicenter_inversion_Vs30.py` | 新增 CEA2019 多参数场地修正版反演；所有周期共用同一台站 A1100，绘图开关不改变震中和 chi2。 |
@@ -27,6 +27,7 @@
 | `mesh_single_rectangular_finite_fault.py` | `[文档]` 说明既有 `dhypo=0.57W` 默认值和地表出露整体下移策略；本轮没有改变网格算法。 |
 | `fault_distance_azimuth_single_multi.py` | `[文档]` 补充既有 Rrup/Rjb/Rx/方位角入口的坐标单位、符号约定和返回结构；距离算法未改。 |
 | `stat_violin.py` | `[功能]` 共用残差统计框由 N、μ、m 扩展为 N、μ、m、总体标准差 σ 和均方根 RMS；保留注释框自适应，避免新增两行被裁切。 |
+| `residual_evaluation.py` | `[功能]` 新增单一坐标轴的左半小提琴、中央箱线、右侧逐台站散点组合图；支持长/短轴等效距和EI/HN筛选；小提琴和箱线使用固定纯色，散点按距离用`Spectral_r`填色，HN为无边框圆点、EI为无边框三角形；同步导出统计摘要和逐台站长表TXT。 |
 | `GB18306_Intensity_Compare.py` | `[文档]` 补充既有烈度对比程序的运行方式和输出文件说明；计算未改。 |
 | `tests/test_models.py`、`tests/test_vs30_inversion.py`、`tests/test_release_contracts.py`、`tests/test_stat_violin.py` | 增加 RotD50 四级回退、模型正反算、断层网格、CB14/A1100、Vs30 换算、公共函数签名、corrected/raw 调用链及第四排 σ/RMS 数值回归测试。 |
 
@@ -67,6 +68,7 @@ CEA2019 图中如选择 `Intensity`，它是由预测 PGA/PGV 按 GB/T 17742-202
 | `Vs30_site_correction.py` | 中国 Vs30 分块查询、CB14 非线性反解及参考场地换算共用模块 |
 | `CB14_site_correct.py` | 用户成熟的 CB14 场地响应倍率接口；应用层统一通过本文件调用 |
 | `stat_violin.py` | 预测—观测残差分布共用的半小提琴、箱线和散点绘图模块 |
+| `residual_evaluation.py` | 跨参数残差半小提琴—箱线—距离着色散点单子图组合图与配套TXT模块 |
 | `tests/` | 模型、反演、断层工具、观测优先级和 Vs30 修正回归测试 |
 
 Pre、vs_Obs 和 epicenter_inversion 均通过 `ellipse_fields.py` 使用同一解析场，
@@ -135,6 +137,49 @@ plot_cea2019_vs_obs(
 ``data``既可以传文件路径，也可以直接传原始或已修正的DataFrame。需要覆盖
 默认Vs30路径或参考场地时，可传
 `site_correction_kwargs={"vs30_path": "...", "reference_vs30": 500}`。
+
+### 跨参数残差单子图组合评估图
+
+`CEA2019_vs_Obs.py` 默认按以下顺序评估17个参数点：
+
+```text
+PGA, PGV, PSA(0.10s), PSA(0.15s), PSA(0.20s), PSA(0.25s),
+PSA(0.30s), PSA(0.40s), PSA(0.50s), PSA(0.75s), PSA(1.00s),
+PSA(1.50s), PSA(2.00s), PSA(3.00s), PSA(4.00s), PSA(5.00s), PSA(6.00s)
+```
+
+GB18306没有PSA，默认只评估PGA、PGV和宏观烈度三个参数，不会伪造PSA结果。
+PGA/PGV残差定义为`ln(预测/观测)`，烈度残差定义为`预测烈度-观测烈度`。
+整张评估图只有一个
+坐标轴；每个参数位置同时绘制左半小提琴、中央箱线和右侧逐台站抖动散点。
+小提琴和箱线使用固定纯色；散点按所选长轴/短轴等效椭圆距离使用`Spectral_r`
+映射，强震仪HN为无轮廓圆点，烈度计EI为无轮廓三角形。每个参数上方明确
+标注中位数`m`、平均值`μ`、总体标准差`σ`和`RMS`；样本量`N`只在图的
+副标题中给出，不在数据区重复标注。
+
+```python
+from CEA2019_vs_Obs import plot_cea2019_residual_evaluation
+
+result = plot_cea2019_residual_evaluation(
+    data="20250107_China_Dingri_total_info_Bandpass_0.05_20Hz.txt",
+    macro_epicenter=(87.5597, 28.8978),
+    Ms=6.8, region="青藏", strike=187,
+    distance_range=(None, 200),  # <200 km；(200, None)表示>=200 km
+    station_type="all",         # all/EI/HN，或全部/烈度台/强震仪
+    axis="长轴",
+    plot_observations="corrected",
+    outpath="CEA2019_residual_evaluation.png",
+)
+```
+
+该调用同时生成同名TXT，包含筛选条件、颜色/符号定义、各参数的N、均值、
+中位数、总体标准差、RMS和四分位数，以及所有绘图台站的观测值、预测值、
+残差、距离、仪器类型和实际采用的观测列。综合图接口也可以直接传
+`evaluation_path="...png"`；反演接口同样支持该参数，并用最优宏观震中评估。
+CEA2019默认使用20 cm × 12 cm，纵轴以0为中心对称，并把观测到的最大绝对
+残差向上取到0.5的整数倍（例如2.1取±2.5）；GB18306默认按三个参数自动
+确定图宽。需要固定版面时可传
+`evaluation_figsize_cm=(宽cm, 高cm)`手动覆盖。
 
 ### 3. 反演宏观震中并自动绘制残差图
 
