@@ -14,6 +14,7 @@ import CEA2019_epicenter_inversion_Vs30 as cea_vs30
 import CEA2019_vs_Obs as cea_obs
 import GB18306_epicenter_inversion_Vs30 as gb_vs30
 import GB18306_vs_Obs as gb_obs
+import residual_evaluation as evaluation
 import Vs30_site_correction as site
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -75,6 +76,26 @@ class ReleaseContractTests(unittest.TestCase):
                     parameters,
                     f"{function.__module__}.{function.__name__} 缺少 {name}",
                 )
+
+    def test_all_prediction_observation_apps_expose_evaluation_options(self):
+        functions = (
+            gb_obs.plot_gb18306_vs_obs,
+            cea_obs.plot_cea2019_vs_obs,
+            gb_vs30.invert_epicenter_gb18306_vs30,
+            cea_vs30.invert_epicenter_cea2019_vs30,
+        )
+        required = {
+            "evaluation_path",
+            "evaluation_table_path",
+            "evaluation_distance_range",
+            "evaluation_station_type",
+            "evaluation_figsize_cm",
+        }
+        for function in functions:
+            self.assertTrue(
+                required.issubset(inspect.signature(function).parameters),
+                function.__qualname__,
+            )
 
     def test_vs30_wrappers_default_to_corrected_and_forward_switch(self):
         cases = (
@@ -234,6 +255,10 @@ class ReleaseContractTests(unittest.TestCase):
             gb_obs.plot_gb18306_vs_obs,
             cea_obs.load_obs_data,
             cea_obs.plot_cea2019_vs_obs,
+            gb_obs.plot_gb18306_residual_evaluation,
+            cea_obs.plot_cea2019_residual_evaluation,
+            evaluation.build_residual_evaluation_tables,
+            evaluation.plot_residual_evaluation_combined,
             site.query_station_vs30,
             site.correct_observations_to_reference_vs30,
             site.prepare_observations_for_site_plot,
