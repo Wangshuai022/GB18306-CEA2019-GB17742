@@ -12,7 +12,11 @@ from CEA2019_epicenter_inversion import (
     invert_epicenter_cea2019,
     normalize_periods,
 )
-from CEA2019_vs_Obs import plot_cea2019_vs_obs
+from CEA2019_vs_Obs import (
+    DEFAULT_CEA2019_EVALUATION_PARAMS,
+    plot_cea2019_residual_evaluation,
+    plot_cea2019_vs_obs,
+)
 from Vs30_site_correction import (
     DEFAULT_REFERENCE_VS30,
     DEFAULT_VS30_PATH,
@@ -52,6 +56,13 @@ def invert_epicenter_cea2019_vs30(
     use_basin=False,
     vs30_chunksize=1_000_000,
     plot_observations="corrected",
+    evaluation_path=None,
+    evaluation_table_path=None,
+    evaluation_GMIMs=None,
+    evaluation_distance_range=None,
+    evaluation_station_type="all",
+    evaluation_axis="长轴",
+    evaluation_figsize_cm=(20.0, 12.0),
     verbose=True,
 ):
     """将观测统一到目标 Vs30 后联合反演 CEA2019 最优宏观震中。
@@ -112,6 +123,21 @@ def invert_epicenter_cea2019_vs30(
     plot_observations : {"corrected", "raw"}, default "corrected"
         ``corrected`` 绘制参考场地观测；``raw`` 仅在图中恢复原始观测。
         该开关不改变震中、chi2、反演残差或导出的反演表。
+    evaluation_path : str, os.PathLike or None
+        可选半小提琴—箱线—散点单子图组合图路径。图中观测状态遵循
+        ``plot_observations``，但反演本身始终使用 Vs30 修正值。
+    evaluation_table_path : str, os.PathLike or None
+        组合评估图配套 TXT；None 时与图同名。
+    evaluation_GMIMs : sequence or None
+        评估横轴参数；None 时采用 PGA、PGV 和 0.10--6.00 s PSA 默认点。
+    evaluation_distance_range : 2-sequence or None
+        可选等效椭圆距离筛选 ``(下限, 上限)`` km。
+    evaluation_station_type : {"all", "EI", "HN"} or Chinese alias
+        全部台站、烈度台或强震仪筛选。
+    evaluation_axis : {"长轴", "短轴"}, default "长轴"
+        距离筛选使用的等效椭圆轴。
+    evaluation_figsize_cm : 2-sequence or None, default (20, 12)
+        组合图宽和图高，单位 cm；None 时按参数数量自动扩展。
     verbose : bool, default True
         是否打印处理进度与反演摘要。
 
@@ -136,6 +162,16 @@ def invert_epicenter_cea2019_vs30(
     for period in plot_periods:
         if period not in periods:
             periods.append(period)
+    evaluation_periods = None
+    if evaluation_path is not None:
+        evaluation_periods = (
+            list(DEFAULT_CEA2019_EVALUATION_PARAMS)
+            if evaluation_GMIMs is None
+            else normalize_periods(evaluation_GMIMs)
+        )
+        for period in evaluation_periods:
+            if period not in periods:
+                periods.append(period)
     corrected, audit = correct_observations_to_reference_vs30(
         data,
         periods,
@@ -193,11 +229,30 @@ def invert_epicenter_cea2019_vs30(
             plot_observations=plot_observations,
             outpath=plot_path,
         )
+    if evaluation_path:
+        result["evaluation"] = plot_cea2019_residual_evaluation(
+            data=corrected,
+            macro_epicenter=result["epicenter"],
+            Ms=Ms,
+            region=region,
+            strike=strike,
+            params=evaluation_periods,
+            extent=extent,
+            outpath=evaluation_path,
+            axis=evaluation_axis,
+            distance_range=evaluation_distance_range,
+            station_type=evaluation_station_type,
+            table_outpath=evaluation_table_path,
+            figsize_cm=evaluation_figsize_cm,
+            plot_observations=plot_observations,
+        )
     return result
 
 
 if __name__ == "__main__":
     os.makedirs("Test_output", exist_ok=True)
+
+    ## 定日
     result = invert_epicenter_cea2019_vs30(
         data="20250107_China_Dingri_total_info_Bandpass_0.05_20Hz.txt",
         Ms=6.8,
@@ -215,7 +270,33 @@ if __name__ == "__main__":
         plot_observations="corrected",  # 改为 "raw" 时只切换图中观测值
         outpath="Test_output/CEA2019_epicenter_inversion_Vs30_500_pgv.txt",
         plot_path="Test_output/CEA2019_epicenter_inversion_Vs30_500_pgv.png",
+        evaluation_path=(
+            "Test_output/CEA2019_epicenter_inversion_Vs30_定日_evaluation.png"
+        ),
     )
+
+    ## 积石山
+    result = invert_epicenter_cea2019_vs30(
+        data="20231218_China_Jishishan_total_info_Bandpass_0.05_20Hz.txt",
+        Ms=6.2,
+        Mw=6.0,
+        region="青藏区",
+        max_dist=200.0,
+        hypo=(102.79, 35.7, 10.0),
+        strike=303,
+        dip=52,
+        rake=62,
+        invert_GMIMs=[-1, -2],
+        plot_GMIMs=[-1, -2, 0.3, 1.0, 3.0, 6.0],
+        true_epi=(102.79, 35.7),
+        plot_observations="corrected",  # 改为 "raw" 时只切换图中观测值
+        outpath="Test_output/CEA2019_epicenter_inversion_Vs30_500_pgv1.txt",
+        plot_path="Test_output/CEA2019_epicenter_inversion_Vs30_500_pgv1.png",
+        evaluation_path=(
+            "Test_output/CEA2019_epicenter_inversion_Vs30_积石山_evaluation.png"
+        ),
+    )
+
     print(
         "Vs30=500 m/s 最优宏观震中：",
         result["epicenter"],
