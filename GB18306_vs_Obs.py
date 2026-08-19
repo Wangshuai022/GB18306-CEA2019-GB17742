@@ -62,6 +62,10 @@ from CEA2019_pre import (
     km_to_lonlat,
 )
 from ellipse_fields import GB18306EllipseField as SharedGB18306EllipseField
+from residual_evaluation import (
+    DEFAULT_GB18306_EVALUATION_PARAMS,
+    plot_residual_evaluation_combined,
+)
 from stat_violin import (
     apply_style,
     fit_annotations_inside,
@@ -168,6 +172,7 @@ def load_obs_data(data, params, param_cols=None):
         df = data.copy()
     else:
         raise TypeError("data 必须是文件路径或 pandas.DataFrame")
+    input_attrs = dict(df.attrs)
     df.columns = [str(c).strip() for c in df.columns]
     df = df.rename(columns={"longi": "lon", "lati": "lat"})
     if "lon" not in df.columns or "lat" not in df.columns:
@@ -206,6 +211,7 @@ def load_obs_data(data, params, param_cols=None):
     out = out.dropna(subset=["lon", "lat"]).reset_index(drop=True)
     if out.empty:
         raise ValueError("没有经纬度有效的观测台站")
+    out.attrs.update(input_attrs)
     out.attrs["source_columns"] = source_columns
     return out
 
@@ -321,6 +327,113 @@ def compute_vs_obs(
     }
 
 
+def plot_gb18306_residual_evaluation(
+    data,
+    Ms,
+    region,
+    strike,
+    macro_epicenter,
+    params=DEFAULT_GB18306_EVALUATION_PARAMS,
+    extent=400.0,
+    outpath="GB18306_residual_evaluation.png",
+    param_cols=None,
+    axis="长轴",
+    distance_range=None,
+    station_type="all",
+    table_outpath=None,
+    figsize_cm=None,
+    plot_observations=None,
+    site_correction_kwargs=None,
+    title=None,
+):
+    """绘制 GB18306 PGA/PGV/烈度预测—观测残差组合评估图。
+
+    Parameters
+    ----------
+    data : str, os.PathLike or pandas.DataFrame
+        观测文件或 DataFrame；支持原始数据和已完成 CB14 修正的数据。
+    Ms, region, strike, macro_epicenter, extent, param_cols
+        与 :func:`plot_gb18306_vs_obs` 中同名参数一致。
+    params : sequence, default (-1, -2, "Intensity")
+        评估参数。GB18306 无 PSA，默认绘制 PGA、PGV 和烈度。PGA/PGV
+        使用对数残差，烈度使用线性残差。
+    outpath : str or os.PathLike
+        单一坐标轴内半小提琴、箱线和距离着色散点组合图的 PNG 输出路径。
+    axis : {"长轴", "短轴"}
+        距离筛选使用的等效椭圆轴。
+    distance_range : tuple(float or None, float or None) or None
+        距离筛选，单位 km；下限包含、上限不包含。
+    station_type : {"all", "EI", "HN"} or Chinese alias
+        全部台站、烈度台或强震仪。
+    table_outpath : str, os.PathLike or None
+        配套 TXT；None 时与 PNG 同名。
+    figsize_cm : tuple(float, float) or None
+        图宽和图高，单位 cm；None 时按参数数量自动扩展。
+    plot_observations : {None, "corrected", "raw"}
+        与综合图一致的场地观测开关。
+    site_correction_kwargs : dict or None
+        原始输入需要 CB14 修正时传给场地修正函数的参数。
+    title : str or None
+        可选总标题。
+
+    Returns
+    -------
+    dict
+        图路径、TXT 路径、逐台站长表、统计摘要和筛选元数据。
+    """
+    normalized = normalize_params(params)
+    if plot_observations is not None:
+        from Vs30_site_correction import prepare_observations_for_site_plot
+
+        # CB14只修正PGA/PGV；宏观烈度是GB18306的独立观测量，必须原样保留。
+        site_periods = [period for period in normalized if period != "Intensity"]
+        if site_periods:
+            data = prepare_observations_for_site_plot(
+                data,
+                periods=site_periods,
+                plot_observations=plot_observations,
+                correction_kwargs=site_correction_kwargs,
+            )
+    computation = compute_vs_obs(
+        data,
+        macro_epicenter,
+        Ms,
+        region,
+        strike,
+        normalized,
+        extent,
+        param_cols,
+    )
+    observation_state = None
+    if isinstance(data, pd.DataFrame):
+        mode = data.attrs.get("site_plot_observations")
+        if mode == "raw":
+            observation_state = "原始场地观测"
+        elif "site_reference_vs30" in data.attrs:
+            reference = float(data.attrs["site_reference_vs30"])
+            model = data.attrs.get("site_correction_model", "场地模型")
+            observation_state = f"{model}修正至Vs30={reference:g} m/s"
+    has_intensity = any(param == "Intensity" for param in normalized)
+    residual_label = (
+        "Residual: ln(Pred/Obs) for PGA/PGV; Pred-Obs for Intensity"
+        if has_intensity
+        else "ln(Predicted / Observed)"
+    )
+    return plot_residual_evaluation_combined(
+        computation,
+        outpath=outpath,
+        model_name="GB18306",
+        residual_label=residual_label,
+        distance_range=distance_range,
+        station_type=station_type,
+        axis=axis,
+        table_outpath=table_outpath,
+        figsize_cm=figsize_cm,
+        title=title,
+        observation_state=observation_state,
+    )
+
+
 # ==================== 主绘图函数（4×N） ====================
 
 
@@ -343,6 +456,12 @@ def plot_gb18306_vs_obs(
     plot_observations=None,
     table_outpath=None,
     site_correction_kwargs=None,
+    evaluation_path=None,
+    evaluation_table_path=None,
+    evaluation_params=DEFAULT_GB18306_EVALUATION_PARAMS,
+    evaluation_distance_range=None,
+    evaluation_station_type="all",
+    evaluation_figsize_cm=None,
 ):
     """绘制 GB18306 的 4×N 预测—观测综合图。
 
@@ -390,6 +509,19 @@ def plot_gb18306_vs_obs(
         当 ``plot_observations`` 为 ``corrected/raw`` 且 ``data`` 是文件路径或
         原始DataFrame时，传给CB14场地修正的可选参数。省略时使用中国Vs30
         默认路径、参考Vs30=500 m/s、区域CH、关闭盆地项。
+    evaluation_path : str, os.PathLike or None
+        可选单子图残差评估图路径；每个参数位置同时包含半小提琴、箱线和散点，
+        并自动输出同名 TXT。
+    evaluation_table_path : str, os.PathLike or None
+        组合评估图配套 TXT 路径；None 时由 ``evaluation_path`` 自动推导。
+    evaluation_params : sequence, default (-1, -2, "Intensity")
+        GB18306 评估参数，默认 PGA、PGV 和烈度。
+    evaluation_distance_range : 2-sequence or None
+        评估图距离筛选 ``(下限, 上限)`` km，下限包含、上限不包含。
+    evaluation_station_type : {"all", "EI", "HN"} or Chinese alias
+        评估图台站类型筛选。
+    evaluation_figsize_cm : 2-sequence or None
+        评估图宽和图高，单位 cm；None 时按参数数量自动扩展。
 
     Returns
     -------
@@ -411,6 +543,10 @@ def plot_gb18306_vs_obs(
         from Vs30_site_correction import prepare_observations_for_site_plot
 
         site_periods = [p for p in normalize_params(params) if p != "Intensity"]
+        if evaluation_path is not None:
+            for period in normalize_params(evaluation_params):
+                if period != "Intensity" and period not in site_periods:
+                    site_periods.append(period)
         data = prepare_observations_for_site_plot(
             data,
             periods=site_periods,
@@ -752,6 +888,23 @@ def plot_gb18306_vs_obs(
         outpath=table_outpath,
         param_cols=param_cols,
     )
+    if evaluation_path is not None:
+        plot_gb18306_residual_evaluation(
+            data=data,
+            Ms=Ms,
+            region=region,
+            strike=strike,
+            macro_epicenter=macro_epicenter,
+            params=evaluation_params,
+            extent=extent,
+            outpath=evaluation_path,
+            param_cols=param_cols,
+            axis=axis,
+            distance_range=evaluation_distance_range,
+            station_type=evaluation_station_type,
+            table_outpath=evaluation_table_path,
+            figsize_cm=evaluation_figsize_cm,
+        )
     return outpath
 
 
@@ -841,6 +994,9 @@ def export_gb18306_vs_obs_txt(
 
 # ---- 测试 ----
 if __name__ == "__main__":
+    os.makedirs("Test_output", exist_ok=True)
+
+    # 定日
     plot_gb18306_vs_obs(
         data="20250107_China_Dingri_total_info_Bandpass_0.05_20Hz.txt",
         macro_epicenter=(87.612, 28.823),
@@ -849,5 +1005,23 @@ if __name__ == "__main__":
         region="青藏区",
         strike=349.0,
         params=(-1, -2, "Intensity"),
-        outpath="Test_output/GB18306_vs_Obs.png",
+        outpath="Test_output/GB18306_vs_Obs_定日.png",
+        plot_observations="corrected",
+        evaluation_path="Test_output/GB18306_vs_Obs_定日_evaluation.png",
+    )
+
+    # 积石山
+    plot_gb18306_vs_obs(
+        data="20231218_China_Jishishan_total_info_Bandpass_0.05_20Hz.txt",
+        macro_epicenter=(102.842, 35.765),
+        initial_epicenter=(102.79, 35.7),
+        Ms=6.2,
+        region="青藏区",
+        strike=303.0,
+        params=(-1, -2, "Intensity"),
+        extent=400.0,
+        max_dist=200.0,
+        outpath="Test_output/GB18306_vs_Obs_积石山.png",
+        plot_observations="corrected",
+        evaluation_path="Test_output/GB18306_vs_Obs_积石山_evaluation.png",
     )
