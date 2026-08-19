@@ -532,6 +532,8 @@ def correct_observations_to_reference_vs30(
         audit[col] = grid_info[col].to_numpy()
 
     suffix = f"Vs30_{reference_vs30:g}"
+    corrected_extra_columns = {}
+    audit_extra_columns = {}
     for period in normalized_periods:
         columns = _columns_for_period(corrected, period)
         if not columns:
@@ -544,15 +546,28 @@ def correct_observations_to_reference_vs30(
             dtype=float,
         )
         label = _period_label(period)
-        audit[f"CB14_factor_{label}_actual_over_reference"] = factors
+        audit_extra_columns[f"CB14_factor_{label}_actual_over_reference"] = factors
         for col in columns:
             raw = pd.to_numeric(corrected[col], errors="coerce").to_numpy(float)
             reference_value = raw / factors
-            corrected[f"{col}_raw"] = raw
-            corrected[f"{col}_{suffix}"] = reference_value
+            corrected_extra_columns[f"{col}_raw"] = raw
+            corrected_extra_columns[f"{col}_{suffix}"] = reference_value
             corrected[col] = reference_value
-            audit[f"{col}_raw"] = raw
-            audit[f"{col}_{suffix}"] = reference_value
+            audit_extra_columns[f"{col}_raw"] = raw
+            audit_extra_columns[f"{col}_{suffix}"] = reference_value
+
+    # CEA2019 一次可修正十几个 PSA 周期。逐列 insert 会造成 DataFrame
+    # 内存碎片并触发 PerformanceWarning；先收集再一次性拼接，列值与顺序不变。
+    if corrected_extra_columns:
+        extra = pd.DataFrame(corrected_extra_columns, index=corrected.index)
+        overlap = corrected.columns.intersection(extra.columns)
+        corrected = pd.concat(
+            [corrected.drop(columns=overlap), extra], axis=1, copy=False
+        )
+    if audit_extra_columns:
+        extra = pd.DataFrame(audit_extra_columns, index=audit.index)
+        overlap = audit.columns.intersection(extra.columns)
+        audit = pd.concat([audit.drop(columns=overlap), extra], axis=1, copy=False)
 
     if verbose:
         print(
