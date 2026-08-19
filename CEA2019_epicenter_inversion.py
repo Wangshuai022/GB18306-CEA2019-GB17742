@@ -62,8 +62,10 @@ from CEA2019_pre import (
     validate_periods,
 )
 from CEA2019_vs_Obs import (
+    DEFAULT_CEA2019_EVALUATION_PARAMS,
     export_cea2019_vs_obs_txt,
     load_obs_data,
+    plot_cea2019_residual_evaluation,
     plot_cea2019_vs_obs,
 )
 from ellipse_fields import CEA2019EllipseField
@@ -174,6 +176,13 @@ def invert_epicenter_cea2019(
     true_epi=None,
     fault_lon_mat=None,
     fault_lat_mat=None,
+    evaluation_path=None,
+    evaluation_table_path=None,
+    evaluation_GMIMs=None,
+    evaluation_distance_range=None,
+    evaluation_station_type="all",
+    evaluation_axis="长轴",
+    evaluation_figsize_cm=(20.0, 12.0),
     verbose=True,
 ):
     """
@@ -199,6 +208,13 @@ def invert_epicenter_cea2019(
                   → 0 / 0.57*W，可自定义（如 -10 / 15）
         local_refine  最优网格点附近连续精化半宽（°；0 = 仅用网格点）
         outpath / plot_path  统计 txt / 4×N 图输出路径（None = 不导出）
+        evaluation_path  可选半小提琴—箱线—散点单子图组合图路径
+        evaluation_table_path  组合图配套 TXT；None 时与图同名
+        evaluation_GMIMs  评估横轴周期；None 时采用默认 17 参数点
+        evaluation_distance_range  可选 (最小距离, 最大距离) km 筛选
+        evaluation_station_type  all / EI / HN，或全部/烈度台/强震仪
+        evaluation_axis  距离筛选采用长轴或短轴等效椭圆距
+        evaluation_figsize_cm  组合图宽和高；默认 (20,12) cm
         true_epi  已知震中（仅验证）
 
     返回 dict：
@@ -555,6 +571,27 @@ def invert_epicenter_cea2019(
             fault_lon_mat=mesh["lon_mat"],
             fault_lat_mat=mesh["lat_mat"],
             outpath=plot_path,
+        )
+    if evaluation_path:
+        evaluation_periods = (
+            list(DEFAULT_CEA2019_EVALUATION_PARAMS)
+            if evaluation_GMIMs is None
+            else normalize_periods(evaluation_GMIMs)
+        )
+        result["evaluation"] = plot_cea2019_residual_evaluation(
+            data=data,
+            macro_epicenter=(lon_opt, lat_opt),
+            Ms=Ms,
+            region=region,
+            strike=strike,
+            params=evaluation_periods,
+            extent=extent,
+            outpath=evaluation_path,
+            axis=evaluation_axis,
+            distance_range=evaluation_distance_range,
+            station_type=evaluation_station_type,
+            table_outpath=evaluation_table_path,
+            figsize_cm=evaluation_figsize_cm,
         )
     return result
 
